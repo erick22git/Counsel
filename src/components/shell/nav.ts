@@ -1,4 +1,4 @@
-import { LayoutDashboard, Briefcase, Users, CalendarDays, CheckSquare, FileText, ScrollText, Receipt, Timer, Settings, type LucideIcon } from "lucide-react";
+import { LayoutDashboard, Briefcase, Users, CalendarDays, CheckSquare, FileText, ScrollText, Receipt, Timer, Settings, Inbox, type LucideIcon } from "lucide-react";
 
 export interface NavItem { href: string; label: string; icon: LucideIcon; primary?: boolean }
 
@@ -9,6 +9,7 @@ export const NAV: NavItem[] = [
   { href: "/clientes", label: "Clientes", icon: Users },
   { href: "/agenda", label: "Agenda", icon: CalendarDays, primary: true },
   { href: "/tareas", label: "Tareas", icon: CheckSquare, primary: true },
+  { href: "/consultas", label: "Consultas", icon: Inbox },
   { href: "/documentos", label: "Documentos", icon: FileText },
   { href: "/plantillas", label: "Plantillas", icon: ScrollText },
   { href: "/cobros", label: "Cobros", icon: Receipt },

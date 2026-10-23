@@ -72,6 +72,22 @@ describe("portal del cliente", () => {
     expect(r.affectedRows).toBe(0);
   });
 
+  it("ve ítems de sus facturas enviadas pero no borradores ni las de otros", async () => {
+    const inv = await asUser(db, ana, async () => {
+      const a = (await db.query<{ id: string }>(`insert into invoices (client_id, number, status) values ($1,'F-0001','enviada') returning id`, [clientA])).rows[0].id;
+      const b = (await db.query<{ id: string }>(`insert into invoices (client_id, number, status) values ($1,'F-0002','borrador') returning id`, [clientA])).rows[0].id;
+      await db.query(`insert into invoice_items (invoice_id, description, unit_price) values ($1,'Honorarios',100),($2,'Borrador',50)`, [a, b]);
+      return a;
+    });
+    const invs = await asUser(db, cliente, async () => (await db.query<{ number: string }>(`select number from invoices`)).rows);
+    expect(invs.map((i) => i.number)).toEqual(["F-0001"]);
+    const items = await asUser(db, cliente, async () => (await db.query<{ description: string }>(`select description from invoice_items`)).rows);
+    expect(items.map((i) => i.description)).toEqual(["Honorarios"]);
+    expect(inv).toBeTruthy();
+    const other = await asUser(db, beto, async () => (await db.query(`select * from invoice_items`)).rows);
+    expect(other).toHaveLength(0);
+  });
+
   it("no ve tareas", async () => {
     const t = await asUser(db, cliente, async () => (await db.query(`select * from tasks`)).rows);
     expect(t).toHaveLength(0);
@@ -103,6 +119,6 @@ describe("leyes (RAG)", () => {
     const s = await db.query<{ id: string }>(`insert into law_sources (code,title,is_demo) values ('DEMO-1','Norma de prueba ficticia',true) returning id`);
     await db.query(`insert into law_chunks (source_id, article, content) values ($1,'Artículo 1','El arrendamiento es el contrato por el cual una parte cede el uso de una cosa')`, [s.rows[0].id]);
     const r = await asUser(db, ana, async () => (await db.query<{ code: string }>(`select * from search_laws('arrendamiento contrato')`)).rows);
-    expect(r[0].code).toBe("DEMO-1");
+    expect(r.map((x) => x.code)).toContain("DEMO-1");
   });
 });

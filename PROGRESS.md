@@ -2,16 +2,13 @@
 
 Última actualización: 2026-10-23
 
-## Hecho
-- Sprint 0 completo (tag sprint-0): Next 16, design system, auth, multi-tenant RLS (11 tests PGlite), CI, PWA base.
-- Lectura de refero.md; skills instaladas (ui-ux-pro-max, impeccable, design-taste-frontend, improve-animations).
-- PRODUCT.md, DESIGN.md, CLAUDE.md, DECISIONS.md.
-
-## En curso
-- Sprint 0: scaffolding Next.js, design system, auth, RLS, CI.
+## Hecho (tags sprint-0 … sprint-4)
+- Sprint 0: Next 16, design system, auth, multi-tenant RLS, CI, PWA base.
+- Sprint 1: clientes, casos (Kanban dnd-kit), agenda, tareas, documentos con versiones, Cmd+K y búsqueda.
+- Sprint 2: editor Tiptap, 32 plantillas, cobros, timer de tiempo, dashboard.
+- Sprint 3: asistente legal con RAG (FTS + vectores opcionales), chat con el caso, dictado con redacción corregida, generador desde plantilla, fuentes legales, script de ingesta Lexivox.
+- Sprint 4: portal del cliente, formulario de consulta, bot de citas, bandeja "Consultas", emails (Resend) + cron de recordatorios, PWA, CSP/HSTS, términos con aceptación registrada, script de datos demo.
+- Verificación final: eslint 0, tsc 0, 171 tests (RLS en PGlite, lógica de módulos), `next build` OK.
 
 ## Pendiente
-- Sprint 1 · Sprint 2 · Sprint 3 · Sprint 4 · README final.
-
-## Para retomar
-`git log --oneline` y `git tag` muestran el último sprint cerrado. Cada sprint cierra con build + lint + tests verdes.
+Ver README → "Qué falta" y DECISIONS.md.

@@ -15,6 +15,11 @@ export function AppShell({ firmName, userName, children }: { firmName: string; u
   const [paletteOpen, setPaletteOpen] = React.useState(false);
   const [aiOpen, setAiOpen] = React.useState(false);
   const [moreOpen, setMoreOpen] = React.useState(false);
+  React.useEffect(() => {
+    const open = () => setAiOpen(true);
+    window.addEventListener("counsel:open-ai", open);
+    return () => window.removeEventListener("counsel:open-ai", open);
+  }, []);
   const active = (href: string) => pathname === href || pathname.startsWith(href + "/");
 
   return (

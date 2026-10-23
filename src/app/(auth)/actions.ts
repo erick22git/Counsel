@@ -1,6 +1,7 @@
 "use server";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { acceptTerms } from "@/lib/legal/actions";
 import { createClient } from "@/lib/supabase/server";
 
 export interface FormState { error?: string }
@@ -42,11 +43,7 @@ export async function signUp(_: FormState, form: FormData): Promise<FormState> {
   if (!data.session) return { error: "Revisa tu correo para confirmar la cuenta y luego inicia sesión." };
   const { error: rpcError } = await supabase.rpc("register_firm", { p_firm_name: firm_name, p_full_name: full_name });
   if (rpcError) return { error: "La cuenta se creó pero no pudimos crear el despacho. Inicia sesión para reintentar." };
-  // Registro de la aceptación de términos (versión vigente)
-  await supabase.from("terms_acceptances").insert([
-    { document: "terminos", version: "2026-10" },
-    { document: "privacidad", version: "2026-10" },
-  ]);
+  await acceptTerms();
   redirect("/panel");
 }
 
@@ -63,9 +60,6 @@ export async function completeFirm(_: FormState, form: FormData): Promise<FormSt
   const supabase = await createClient();
   const { error } = await supabase.rpc("register_firm", { p_firm_name: parsed.data.firm_name, p_full_name: parsed.data.full_name });
   if (error) return { error: "No pudimos crear el despacho. Intenta de nuevo." };
-  await supabase.from("terms_acceptances").insert([
-    { document: "terminos", version: "2026-10" },
-    { document: "privacidad", version: "2026-10" },
-  ]);
+  await acceptTerms();
   redirect("/panel");
 }
