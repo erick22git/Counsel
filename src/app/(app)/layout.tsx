@@ -4,6 +4,8 @@ import { PrefsProvider } from "@/components/shell/prefs-provider";
 import { TermsGate } from "@/components/legal/terms-gate";
 import { TERMS_VERSION } from "@/lib/legal/versions";
 
+export const dynamic = "force-dynamic";
+
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const { supabase, profile, firm } = await requireStaff();
   const { count } = await supabase

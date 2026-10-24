@@ -4,6 +4,8 @@ import { signOut } from "@/app/(auth)/actions";
 
 export const metadata = { title: "Mi caso · Counsel" };
 
+export const dynamic = "force-dynamic";
+
 export default async function PortalLayout({ children }: { children: React.ReactNode }) {
   const { profile } = await requireClient();
   return (
