@@ -3,14 +3,16 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Search, Sparkles, MoreHorizontal, LogOut } from "lucide-react";
-import { NAV } from "./nav";
+import { NAV as ALL_NAV } from "./nav";
 import { CommandPalette } from "./command-palette";
 import { AiPanel } from "@/components/ai/ai-panel";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { signOut } from "@/app/(auth)/actions";
 
-export function AppShell({ firmName, userName, children }: { firmName: string; userName: string; children: React.ReactNode }) {
+export function AppShell({ firmName, userName, role, children }: { firmName: string; userName: string; role?: string; children: React.ReactNode }) {
+  // El asistente no tiene acceso a cobros ni tiempo (RLS): se oculta para no mostrar pantallas vacías.
+  const NAV = ALL_NAV.filter((n) => !(role === "assistant" && (n.href === "/cobros" || n.href === "/tiempo")));
   const pathname = usePathname();
   const [paletteOpen, setPaletteOpen] = React.useState(false);
   const [aiOpen, setAiOpen] = React.useState(false);

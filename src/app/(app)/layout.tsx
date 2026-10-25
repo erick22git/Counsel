@@ -15,7 +15,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     .eq("version", TERMS_VERSION);
   return (
     <PrefsProvider initial={profile.preferences}>
-      <AppShell firmName={firm.name} userName={profile.full_name}>
+      <AppShell firmName={firm.name} userName={profile.full_name} role={profile.role}>
         {children}
       </AppShell>
       <TermsGate needed={(count ?? 0) < 2} />

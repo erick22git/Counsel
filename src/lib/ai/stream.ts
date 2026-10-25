@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getAnthropic, MODEL, aiConfigured } from "./client";
+import { getLLM, providerBlocker, ProviderConfigError, type GenerateParams, type LLMProvider } from "./providers";
+import { allow } from "@/lib/security/rate-limit";
 
 export type Send = (o: Record<string, unknown>) => void;
 
@@ -15,7 +16,9 @@ export function ndjson(run: (send: Send) => Promise<void>): Response {
           await run(send);
         } catch (e) {
           console.error("[ia]", e instanceof Error ? e.message : e);
-          send({ type: "error", message: "No pude completar la consulta. Intenta de nuevo en un momento." });
+          // Errores de configuración/conexión del proveedor son seguros de mostrar (no contienen claves).
+          const msg = e instanceof ProviderConfigError ? e.message : "No pude completar la consulta. Intenta de nuevo en un momento.";
+          send({ type: "error", message: msg });
         }
         c.close();
       },
@@ -24,67 +27,44 @@ export function ndjson(run: (send: Send) => Promise<void>): Response {
   );
 }
 
-export const DAILY_LIMIT = 150;
+const num = (v: string | undefined, d: number) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d);
+/** Límites de uso (configurables): por usuario/día, por despacho/día y ráfaga por usuario/minuto. */
+export const limits = () => ({
+  userDaily: num(process.env.AI_DAILY_LIMIT_PER_USER, 150),
+  firmDaily: num(process.env.AI_DAILY_LIMIT_PER_FIRM, 500),
+  burstPerMinute: num(process.env.AI_BURST_PER_MINUTE, 20),
+});
 
-/** Autenticación + límite diario por usuario. Devuelve Response de error o el contexto. */
-export async function guard(supabase: SupabaseClient) {
+/** Autenticación + proveedor listo + límites por ráfaga, usuario y despacho. Devuelve Response de error o el proveedor. */
+export async function guard(supabase: SupabaseClient): Promise<{ error: Response } | { user: { id: string }; provider: LLMProvider }> {
   const { data } = await supabase.auth.getUser();
   if (!data.user) return { error: Response.json({ error: "No autenticado" }, { status: 401 }) };
-  if (!aiConfigured()) {
-    return { error: Response.json({ error: "La IA no está activada todavía. Falta configurar ANTHROPIC_API_KEY." }, { status: 503 }) };
+  const blocker = providerBlocker();
+  if (blocker) return { error: Response.json({ error: `La IA no está activada todavía. ${blocker}.` }, { status: 503 }) };
+  const L = limits();
+  if (!allow(`ia:${data.user.id}`, L.burstPerMinute, 60_000)) {
+    return { error: Response.json({ error: "Estás consultando muy rápido. Espera un minuto e intenta de nuevo." }, { status: 429 }) };
   }
   const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-  const { count } = await supabase.from("ai_audit_log").select("id", { count: "exact", head: true }).eq("user_id", data.user.id).gte("created_at", since);
-  if ((count ?? 0) >= DAILY_LIMIT) {
-    return { error: Response.json({ error: "Llegaste al límite diario de consultas a la IA. Vuelve mañana." }, { status: 429 }) };
-  }
-  return { user: data.user };
+  const [mine, firm] = await Promise.all([
+    supabase.from("ai_audit_log").select("id", { count: "exact", head: true }).eq("user_id", data.user.id).gte("created_at", since),
+    supabase.from("ai_audit_log").select("id", { count: "exact", head: true }).gte("created_at", since), // RLS limita al despacho
+  ]);
+  if ((mine.count ?? 0) >= L.userDaily) return { error: Response.json({ error: "Llegaste a tu límite diario de consultas a la IA. Vuelve mañana." }, { status: 429 }) };
+  if ((firm.count ?? 0) >= L.firmDaily) return { error: Response.json({ error: "Tu despacho alcanzó el límite diario de consultas a la IA. Vuelve mañana." }, { status: 429 }) };
+  return { user: data.user, provider: getLLM() };
 }
 
-export async function audit(supabase: SupabaseClient, feature: string, summary: string, charsSent: number) {
-  await supabase.from("ai_audit_log").insert({ feature, summary, chars_sent: charsSent, model: MODEL });
+export async function audit(supabase: SupabaseClient, provider: LLMProvider, feature: string, summary: string, charsSent: number) {
+  await supabase.from("ai_audit_log").insert({ feature, summary, chars_sent: charsSent, model: `${provider.id}:${provider.model}` });
 }
 
-/** Transmite el texto del modelo y devuelve el texto completo. */
-export async function streamClaude(opts: {
-  system: string;
-  messages: { role: "user" | "assistant"; content: string }[];
-  send: Send;
-  maxTokens?: number;
-  effort?: "low" | "medium" | "high";
-}): Promise<string> {
-  const stream = getAnthropic().messages.stream({
-    model: MODEL,
-    max_tokens: opts.maxTokens ?? 4000,
-    system: opts.system,
-    messages: opts.messages,
-    output_config: { effort: opts.effort ?? "medium" },
-  } as Parameters<ReturnType<typeof getAnthropic>["messages"]["stream"]>[0]);
+/** Transmite el texto del proveedor activo y devuelve el texto completo. */
+export async function streamLLM(provider: LLMProvider, p: GenerateParams, send: Send): Promise<string> {
   let full = "";
-  for await (const ev of stream) {
-    if (ev.type === "content_block_delta" && ev.delta.type === "text_delta") {
-      full += ev.delta.text;
-      opts.send({ type: "text", delta: ev.delta.text });
-    }
-  }
-  const final = await stream.finalMessage();
-  if (final.stop_reason === "refusal") {
-    opts.send({ type: "notice", message: "La IA no pudo responder a esta consulta." });
+  for await (const d of provider.stream(p)) {
+    full += d;
+    send({ type: "text", delta: d });
   }
   return full;
-}
-
-/** Llamada sin streaming (corrección, extracción). */
-export async function completeClaude(system: string, user: string, maxTokens = 4000): Promise<string> {
-  const res = await getAnthropic().messages.create({
-    model: MODEL,
-    max_tokens: maxTokens,
-    system,
-    messages: [{ role: "user", content: user }],
-    output_config: { effort: "low" },
-  } as Parameters<ReturnType<typeof getAnthropic>["messages"]["create"]>[0] & { stream?: false });
-  return (res as { content: { type: string; text?: string }[] }).content
-    .filter((b) => b.type === "text")
-    .map((b) => b.text ?? "")
-    .join("");
 }

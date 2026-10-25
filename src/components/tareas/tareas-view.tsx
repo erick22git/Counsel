@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, Pill } from "@/components/ui/card";
 import { Input } from "@/components/ui/field";
@@ -27,9 +28,11 @@ const SECTIONS: { id: TaskBucket; title: string }[] = [
 ];
 
 export function TareasView({
-  tasks, cases, people, meId, openNew, presetCaseId,
+  tasks, cases, people, meId, openNew, presetCaseId, hechasTotal, hechasMoreHref, pendientesTruncadas, hechasAbierto,
 }: {
   tasks: Task[]; cases: CaseOpt[]; people: Person[]; meId: string; openNew: boolean; presetCaseId: string;
+  /** Hechas de los últimos 30 días (en total) y enlace a "ver más"; el servidor solo envía un bloque a la vez. */
+  hechasTotal?: number; hechasMoreHref?: string | null; pendientesTruncadas?: boolean; hechasAbierto?: boolean;
 }) {
   const [filter, setFilter] = React.useState<"mias" | "todas">("mias");
   const [dialogOpen, setDialogOpen] = React.useState(!!presetCaseId);
@@ -126,6 +129,12 @@ export function TareasView({
         </TabsList>
       </Tabs>
 
+      {pendientesTruncadas && (
+        <p className="rounded-[var(--radius-card)] border border-line bg-surface-2 p-3 text-ink-2" role="status">
+          Mostrando las 500 tareas pendientes más próximas. Termina o reorganiza algunas para ver el resto.
+        </p>
+      )}
+
       {visible.length === 0 ? (
         <EmptyState
           title={filter === "mias" ? "No tienes tareas pendientes" : "No hay tareas todavía"}
@@ -153,11 +162,16 @@ export function TareasView({
               </ul>
             );
             return s.id === "hechas" ? (
-              <details key={s.id}>
+              <details key={s.id} id="hechas" open={hechasAbierto || undefined}>
                 <summary className="press flex min-h-11 cursor-pointer items-center text-[length:var(--text-heading-sm)] font-semibold">
-                  Hechas ({list.length})
+                  Hechas ({list.length}{hechasTotal && filter === "todas" && hechasTotal > list.length ? ` de ${hechasTotal}` : ""})
                 </summary>
-                <div className="mt-3">{rows}</div>
+                <div className="mt-3 grid gap-3">
+                  {rows}
+                  {hechasMoreHref && (
+                    <Button asChild variant="outline" className="justify-self-start"><Link href={hechasMoreHref} scroll={false}>Ver más hechas</Link></Button>
+                  )}
+                </div>
               </details>
             ) : (
               <section key={s.id} aria-label={s.title} className="grid gap-3">

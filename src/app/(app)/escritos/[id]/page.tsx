@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireStaff } from "@/lib/auth";
+import { LogView } from "@/components/auditoria/log-view";
 import { EscritoEditor } from "@/components/editor/escrito-editor";
 
 export const metadata = { title: "Escrito · Counsel" };
@@ -22,6 +23,8 @@ export default async function EscritoPage({ params }: { params: Promise<{ id: st
   ]);
 
   return (
+    <>
+    <LogView entity="documents" id={doc.id} />
     <EscritoEditor
       id={doc.id}
       initialTitle={doc.title}
@@ -31,5 +34,6 @@ export default async function EscritoPage({ params }: { params: Promise<{ id: st
       versions={v.data ?? []}
       cases={c.data ?? []}
     />
+    </>
   );
 }

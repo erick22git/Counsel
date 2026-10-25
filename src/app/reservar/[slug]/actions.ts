@@ -17,7 +17,8 @@ export async function requestAppointment(input: unknown): Promise<{ ok: boolean;
   const d = parsed.data;
   const when = new Date(d.preferred);
   if (Number.isNaN(when.getTime()) || when.getTime() < Date.now()) return { ok: false, error: "Elige una fecha futura." };
-  if (!(await rateLimit("cita", 4))) return { ok: false, error: "Demasiados intentos. Prueba de nuevo en unos minutos." };
+  const lim = await rateLimit("cita", 4);
+  if (!lim.ok) return { ok: false, error: lim.message };
   const isEmail = d.contact.includes("@");
   const supabase = await createClient();
   const { error } = await supabase.rpc("request_appointment", {

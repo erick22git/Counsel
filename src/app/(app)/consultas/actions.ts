@@ -2,9 +2,10 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { fmtDateTime } from "@/lib/format";
+import { mailNotice } from "@/lib/email/send";
+import { confirmationEmail } from "@/lib/email/reminders";
 
-type R = { ok: true; caseId?: string } | { ok: false; error: string };
+type R = { ok: true; caseId?: string; notice?: string } | { ok: false; error: string };
 const id = z.string().uuid();
 
 /** Convierte una consulta en cliente + caso nuevo. */
@@ -43,14 +44,12 @@ export async function confirmRequest(input: string): Promise<R> {
   if (error) return { ok: false, error: "No se pudo crear la cita." };
   await supabase.from("appointment_requests").update({ status: "confirmada", appointment_id: a.id }).eq("id", r.id);
   if (r.email) {
-    await supabase.from("notifications").insert({
-      to_email: r.email, kind: "cita_confirmada", subject: "Tu cita fue confirmada",
-      body: `Hola ${r.full_name}, tu cita quedó confirmada para ${fmtDateTime(r.preferred_at)} (hora de La Paz).`,
-    });
+    await supabase.from("notifications").insert(confirmationEmail({ full_name: r.full_name, email: r.email, preferred_at: r.preferred_at }));
   }
   revalidatePath("/consultas");
   revalidatePath("/agenda");
-  return { ok: true };
+  // Sin RESEND_API_KEY el aviso queda en cola: se lo decimos a la persona en vez de fallar en silencio.
+  return { ok: true, notice: r.email ? mailNotice() ?? undefined : undefined };
 }
 
 export async function rejectRequest(input: string): Promise<R> {

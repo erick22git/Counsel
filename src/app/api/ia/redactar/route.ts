@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { audit, completeClaude, guard } from "@/lib/ai/stream";
+import { audit, guard } from "@/lib/ai/stream";
+import { ProviderConfigError } from "@/lib/ai/providers";
 import { POLISH_SYSTEM } from "@/lib/ai/prompts";
 
 export const maxDuration = 60;
@@ -11,15 +12,15 @@ const body = z.object({ text: z.string().trim().min(5, "No hay texto para correg
 export async function POST(req: Request) {
   const supabase = await createClient();
   const g = await guard(supabase);
-  if (g.error) return g.error;
+  if ("error" in g) return g.error;
   const parsed = body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: parsed.error.issues[0].message }, { status: 400 });
   try {
-    const text = await completeClaude(POLISH_SYSTEM, parsed.data.text, 6000);
-    await audit(supabase, "redaccion", "El texto que dictaste (solo ese texto).", parsed.data.text.length);
+    const text = await g.provider.complete({ system: POLISH_SYSTEM, messages: [{ role: "user", content: parsed.data.text }], maxTokens: 6000, effort: "low" });
+    await audit(supabase, g.provider, "redaccion", "El texto que dictaste (solo ese texto).", parsed.data.text.length);
     return Response.json({ text: text.trim(), sent: "Solo el texto que dictaste." });
   } catch (e) {
     console.error("[ia/redactar]", e instanceof Error ? e.message : e);
-    return Response.json({ error: "No pude corregir el texto. Intenta de nuevo." }, { status: 502 });
+    return Response.json({ error: e instanceof ProviderConfigError ? e.message : "No pude corregir el texto. Intenta de nuevo." }, { status: 502 });
   }
 }

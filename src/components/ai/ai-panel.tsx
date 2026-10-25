@@ -30,6 +30,15 @@ export function AiPanel({ open, onClose }: { open: boolean; onClose: () => void 
   const [hidePII, setHidePII] = React.useState(true);
   const [disclosure, setDisclosure] = React.useState<{ label: string; count: number }[] | null>(null);
   const endRef = React.useRef<HTMLDivElement>(null);
+  const [status, setStatus] = React.useState<{ label: string; model: string; warning: string | null; blocker: string | null } | null>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    fetch("/api/ia/estado")
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setStatus)
+      .catch(() => {});
+  }, [open]);
 
   React.useEffect(() => {
     const on = (e: Event) => {
@@ -133,6 +142,16 @@ export function AiPanel({ open, onClose }: { open: boolean; onClose: () => void 
           </button>
         ))}
       </div>
+
+      {status && (
+        <div className="border-b border-line px-5 py-2 text-[length:var(--text-body-sm)]" aria-live="polite">
+          <p className="text-ink-2">
+            IA activa: <strong className="text-ink">{status.label}</strong> · {status.model}
+          </p>
+          {status.warning && <p className="mt-1 rounded-md bg-danger-soft px-2 py-1 font-medium text-danger">{status.warning}</p>}
+          {status.blocker && <p className="mt-1 text-warn">{status.blocker}. Configúralo en .env.local.</p>}
+        </div>
+      )}
 
       <p className="flex items-start gap-2 bg-warn-soft px-5 py-2 text-[length:var(--text-body-sm)] text-warn">
         <ShieldAlert size={18} aria-hidden className="mt-0.5 shrink-0" /> {AI_DISCLAIMER}

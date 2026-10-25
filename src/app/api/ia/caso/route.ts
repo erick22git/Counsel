@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { audit, guard, ndjson, streamClaude } from "@/lib/ai/stream";
+import { audit, guard, ndjson, streamLLM } from "@/lib/ai/stream";
 import { retrieveLaws } from "@/lib/ai/rag";
 import { buildCaseContext } from "@/lib/ai/case-context";
 import { CASE_SYSTEM } from "@/lib/ai/prompts";
 import { sourcesBlock, usedCitations, invalidCitationMarkers } from "@/lib/ai/text";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 const body = z.object({
   caseId: z.string().uuid(),
@@ -29,19 +29,19 @@ export async function POST(req: Request) {
   if (preview) return Response.json({ title: ctx.title, disclosure: ctx.disclosure, chars: ctx.chars, hidePII });
 
   const g = await guard(supabase);
-  if (g.error) return g.error;
+  if ("error" in g) return g.error;
 
   return ndjson(async (send) => {
     const sources = await retrieveLaws(supabase, question, 5);
     const sent = `${ctx.disclosure.map((d) => `${d.count} ${d.label.toLowerCase()}`).join(", ")}${sources.length ? `, y ${sources.length} fragmentos de leyes` : ""}.`;
     send({ type: "meta", sent, hasSources: sources.length > 0 });
     const userMsg = `${ctx.text}\n\nFUENTES:\n${sources.length ? sourcesBlock(sources) : "(ninguna encontrada en la base para esta pregunta)"}\n\nPREGUNTA DEL ABOGADO:\n${question}`;
-    const text = await streamClaude({ system: CASE_SYSTEM, messages: [...history.slice(-6), { role: "user", content: userMsg }], send });
+    const text = await streamLLM(g.provider, { system: CASE_SYSTEM, messages: [...history.slice(-6), { role: "user", content: userMsg }] }, send);
     const cites = usedCitations(text, sources).map(({ n, source }) => ({
       n, code: source.code, law_title: source.law_title, article: source.article, source_name: source.source_name,
       source_url: source.source_url, license: source.license, is_demo: source.is_demo,
     }));
     send({ type: "done", citations: cites, invalid: invalidCitationMarkers(text, sources.length) });
-    await audit(supabase, "caso", sent, userMsg.length + CASE_SYSTEM.length);
+    await audit(supabase, g.provider, "caso", sent, userMsg.length + CASE_SYSTEM.length);
   });
 }

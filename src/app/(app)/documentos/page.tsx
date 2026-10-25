@@ -2,9 +2,14 @@ import Link from "next/link";
 import { PageHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Input, Select } from "@/components/ui/field";
+import { Select } from "@/components/ui/field";
 import { requireStaff } from "@/lib/auth";
-import { TIPO_LABEL, docTipo, type DocTipo } from "@/lib/documentos/files";
+import { TIPO_LABEL, type DocTipo } from "@/lib/documentos/files";
+import {
+  applyDocTipo, enumParam, fetchPage, ilikePattern, parseListParams, uuidParam, type RawParams,
+} from "@/lib/paginacion";
+import { BuscadorLista } from "@/components/paginacion/buscador-lista";
+import { Paginacion } from "@/components/paginacion/paginacion";
 import type { Doc } from "@/lib/db/types";
 import { DocumentList, type DocRow } from "@/components/documentos/document-list";
 import { UploadDialog, type CaseOption } from "@/components/documentos/upload-dialog";
@@ -18,24 +23,26 @@ const one = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? v[0] ?? nul
 
 export default async function DocumentosPage({
   searchParams,
-}: { searchParams: Promise<{ q?: string; caso?: string; tipo?: string; nuevo?: string }> }) {
+}: { searchParams: Promise<RawParams & { nuevo?: string }> }) {
   const sp = await searchParams;
   const { supabase, firm } = await requireStaff();
-  const q = (sp.q ?? "").trim();
-  const caso = sp.caso && /^[0-9a-f-]{36}$/i.test(sp.caso) ? sp.caso : "";
-  const tipo = (sp.tipo && sp.tipo in TIPO_LABEL ? sp.tipo : "") as DocTipo | "";
+  const { page, q, filters } = parseListParams(sp, {
+    filters: { caso: uuidParam, tipo: enumParam(Object.keys(TIPO_LABEL)) },
+  });
+  const caso = filters.caso;
+  const tipo = filters.tipo as DocTipo | "";
 
-  let query = supabase
-    .from("documents")
-    .select("*, cases(title, clients(full_name))")
-    .is("deleted_at", null)
-    .order("updated_at", { ascending: false })
-    .limit(500);
-  if (q) query = query.ilike("title", `%${q.replace(/[%_,]/g, " ")}%`);
-  if (caso) query = query.eq("case_id", caso);
-
-  const [{ data: rows }, { data: caseRows }] = await Promise.all([
-    query,
+  const [{ rows, meta }, { data: caseRows }] = await Promise.all([
+    fetchPage<Row>((from, to) => {
+      let query = supabase
+        .from("documents")
+        .select("*, cases(title, clients(full_name))", { count: "exact" })
+        .is("deleted_at", null);
+      if (q) query = query.ilike("title", ilikePattern(q));
+      if (caso) query = query.eq("case_id", caso);
+      query = applyDocTipo(query, tipo);
+      return query.order("updated_at", { ascending: false }).order("id").range(from, to).returns<Row[]>();
+    }, page),
     supabase
       .from("cases")
       .select("id, title, clients(full_name)")
@@ -49,14 +56,13 @@ export default async function DocumentosPage({
     label: `${c.title}${one(c.clients) ? ` — ${one(c.clients)!.full_name}` : ""}`,
   }));
 
-  let docs: DocRow[] = ((rows ?? []) as unknown as Row[]).map((r) => {
+  const docs: DocRow[] = rows.map((r) => {
     const c = one(r.cases);
     const client = c ? one(c.clients) : null;
     const { cases: _c, ...doc } = r;
     void _c;
     return { ...doc, case_label: c ? `${c.title}${client ? ` — ${client.full_name}` : ""}` : null };
   });
-  if (tipo) docs = docs.filter((d) => docTipo(d) === tipo);
 
   const filtering = !!(q || caso || tipo);
 
@@ -79,11 +85,10 @@ export default async function DocumentosPage({
         }
       />
 
-      <form method="get" className="mb-6 grid gap-3 sm:grid-cols-[1fr_1fr_12rem_auto]" role="search" aria-label="Buscar documentos">
-        <div className="grid gap-1.5">
-          <label htmlFor="f-q" className="font-medium">Buscar por título</label>
-          <Input id="f-q" name="q" defaultValue={q} placeholder="Ej.: poder notarial" />
-        </div>
+      <BuscadorLista
+        basePath="/documentos" q={q} id="f-q" label="Buscar por título" placeholder="Ej.: poder notarial"
+        clearHref="/documentos" active={Boolean(q || caso || tipo)}
+      >
         <div className="grid gap-1.5">
           <label htmlFor="f-caso" className="font-medium">Caso</label>
           <Select id="f-caso" name="caso" defaultValue={caso}>
@@ -98,13 +103,7 @@ export default async function DocumentosPage({
             {(Object.keys(TIPO_LABEL) as DocTipo[]).map((t) => <option key={t} value={t}>{TIPO_LABEL[t]}</option>)}
           </Select>
         </div>
-        <div className="flex items-end gap-2">
-          <Button type="submit" variant="outline">Buscar</Button>
-          {filtering && (
-            <Button asChild variant="ghost"><Link href="/documentos">Quitar filtros</Link></Button>
-          )}
-        </div>
-      </form>
+      </BuscadorLista>
 
       {docs.length === 0 ? (
         filtering ? (
@@ -120,7 +119,10 @@ export default async function DocumentosPage({
           />
         )
       ) : (
-        <DocumentList docs={docs} firmId={firm.id} cases={cases} />
+        <>
+          <DocumentList docs={docs} firmId={firm.id} cases={cases} />
+          <Paginacion total={meta.total} page={meta.page} pageSize={meta.pageSize} basePath="/documentos" params={{ q, caso, tipo }} noun="documentos" />
+        </>
       )}
     </>
   );

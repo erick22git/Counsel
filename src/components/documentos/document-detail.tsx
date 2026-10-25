@@ -16,6 +16,8 @@ import { FileDrop } from "./file-drop";
 import { removeFromStorage, uploadToStorage } from "./upload-client";
 import type { CaseOption } from "./upload-dialog";
 
+import { LogView } from "@/components/auditoria/log-view";
+
 export function DocumentDetail({
   doc, firmId, cases, onClose,
 }: { doc: Doc; firmId: string; cases: CaseOption[]; onClose: () => void }) {
@@ -115,6 +117,7 @@ export function DocumentDetail({
 
   return (
     <div className="grid gap-6">
+      <LogView entity="documents" id={doc.id} />
       <div className="flex flex-wrap items-center gap-2 text-ink-2">
         <Pill tone="accent">v{doc.current_version}</Pill>
         <span>{formatBytes(doc.size_bytes)}</span>

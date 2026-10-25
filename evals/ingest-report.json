@@ -1,0 +1,57 @@
+{
+  "generatedAt": "2026-10-25T14:17:47.903Z",
+  "dryRun": true,
+  "embed": false,
+  "embedProvider": null,
+  "laws": [
+    {
+      "code": "CPE",
+      "title": "Constitución Política del Estado (2009)",
+      "status": "ok",
+      "loaded": 431,
+      "updated": 0,
+      "unchanged": 0,
+      "skipped": [],
+      "renamed": [],
+      "obsolete": 0,
+      "embedded": 0,
+      "normDate": "2009-02-07"
+    },
+    {
+      "code": "CPC",
+      "title": "Código Procesal Civil (Ley 439)",
+      "status": "ok",
+      "loaded": 522,
+      "updated": 0,
+      "unchanged": 0,
+      "skipped": [],
+      "renamed": [
+        "Artículo 2° (2)"
+      ],
+      "obsolete": 0,
+      "embedded": 0,
+      "normDate": "2013-11-19"
+    },
+    {
+      "code": "CFAM",
+      "title": "Código de las Familias y del Proceso Familiar (Ley 603)",
+      "status": "ok",
+      "loaded": 453,
+      "updated": 0,
+      "unchanged": 0,
+      "skipped": [],
+      "renamed": [],
+      "obsolete": 0,
+      "embedded": 0,
+      "normDate": "2014-11-24"
+    }
+  ],
+  "totals": {
+    "loaded": 1406,
+    "updated": 0,
+    "unchanged": 0,
+    "skipped": 0,
+    "errors": 0
+  },
+  "notes": []
+}

@@ -6,7 +6,16 @@ import path from "node:path";
 const MIGRATIONS = path.resolve(__dirname, "../../supabase/migrations");
 
 /** Reproduce lo mínimo de Supabase (esquema auth, roles) para probar migraciones y RLS en Postgres WASM. */
-export async function createDb() {
+export type CreateDbOptions = {
+  /**
+   * true = imita los privilegios reales de Supabase: `default privileges` que dan ALL a anon/authenticated
+   * sobre tablas y EXECUTE sobre funciones (y PUBLIC ya tiene EXECUTE por defecto en Postgres), y NO aplica
+   * los grants "de conveniencia" del final. Sirve para auditar grants. Por defecto false (comportamiento previo).
+   */
+  realGrants?: boolean;
+};
+
+export async function createDb(opts: CreateDbOptions = {}) {
   const db = new PGlite({ extensions: { vector } });
   await db.exec(`
     create schema if not exists auth;
@@ -20,13 +29,20 @@ export async function createDb() {
     end $$;
     grant usage on schema public, auth to authenticated, anon;
   `);
+  if (opts.realGrants) {
+    await db.exec(`
+      alter default privileges in schema public grant all on tables to anon, authenticated;
+      alter default privileges in schema public grant all on sequences to anon, authenticated;
+      alter default privileges in schema public grant execute on functions to anon, authenticated;
+    `);
+  }
   // Solo migraciones de esquema: las de storage requieren el esquema `storage` de Supabase.
   const files = fs
     .readdirSync(MIGRATIONS)
     .filter((f) => f.endsWith(".sql") && !f.includes("storage"))
     .sort();
   for (const f of files) await db.exec(fs.readFileSync(path.join(MIGRATIONS, f), "utf8"));
-  await db.exec(`
+  if (!opts.realGrants) await db.exec(`
     grant select, insert, update, delete on all tables in schema public to authenticated;
     grant select on all tables in schema public to anon;
     grant execute on all functions in schema public to authenticated, anon;

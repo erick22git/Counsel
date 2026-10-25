@@ -21,7 +21,8 @@ export async function submitIntake(_: PublicState, form: FormData): Promise<Publ
   if (!parsed.success) return { error: parsed.error.issues[0].message };
   const d = parsed.data;
   if (!d.email && !d.phone) return { error: "Déjanos un correo o un teléfono para responderte." };
-  if (!(await rateLimit("intake", 5))) return { error: "Enviaste varias consultas seguidas. Intenta de nuevo en unos minutos." };
+  const lim = await rateLimit("intake", 5);
+  if (!lim.ok) return { error: lim.message };
   const supabase = await createClient();
   const { error } = await supabase.rpc("submit_intake", {
     p_slug: d.slug, p_name: d.name, p_email: d.email, p_phone: d.phone, p_matter: d.matter, p_message: d.message,

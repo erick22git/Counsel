@@ -1164,3 +1164,535 @@ create policy invoice_items_portal on invoice_items for select to authenticated
 create policy payments_portal on payments for select to authenticated
   using (exists (select 1 from invoices i where i.id = invoice_id and i.client_id = current_client_id() and i.status in ('enviada','pagada')));
 
+-- ===== supabase/migrations/0007_laws_meta.sql =====
+-- Metadatos de ingesta de leyes + idempotencia (upsert por (source_id, article)).
+alter table law_sources add column if not exists norm_date date;
+alter table law_sources add column if not exists origin_url text;
+alter table law_sources add column if not exists attribution text;
+
+alter table law_chunks add column if not exists norm_date date;
+alter table law_chunks add column if not exists origin_url text;
+alter table law_chunks add column if not exists attribution text;
+alter table law_chunks add column if not exists content_hash text;
+
+-- Un artículo por fuente. No es parcial a propósito: PostgREST (onConflict=source_id,article) no infiere índices parciales.
+-- Los article NULL siguen permitidos (en Postgres los NULL son distintos entre sí).
+create unique index if not exists law_chunks_source_article_uq
+  on law_chunks (source_id, article);
+
+-- ===== supabase/migrations/0008_team_roles.sql =====
+-- Counsel · equipo y permisos por rol (Sprint 5-6, E1)
+-- * profiles.active: "quitar" a un colega = desactivarlo (reversible). Inactivo => no ve nada (RLS).
+-- * has_role(): helper para políticas por rol.
+-- * Políticas por rol sobre las tablas *_staff de 0001 (owner todo; lawyer sin gestionar equipo ni borrar
+--   definitivamente; assistant sin cobros/tiempo/auditoría IA ni perfiles ajenos).
+-- * Funciones set_member_role / set_member_active (solo titular) y límite de 10 miembros.
+-- Idempotente: puede ejecutarse más de una vez.
+
+alter table profiles add column if not exists active boolean not null default true;
+
+-- ───────────────────────── Funciones auxiliares (misma firma que 0001) ─────────────────────────
+create or replace function public.current_firm_id() returns uuid
+language sql stable security definer set search_path = public as $$
+  select firm_id from profiles where id = auth.uid() and active
+$$;
+
+create or replace function public.current_user_role() returns user_role
+language sql stable security definer set search_path = public as $$
+  select role from profiles where id = auth.uid() and active
+$$;
+
+create or replace function public.current_client_id() returns uuid
+language sql stable security definer set search_path = public as $$
+  select client_id from profiles where id = auth.uid() and role = 'client' and active
+$$;
+
+create or replace function public.is_staff() returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select role <> 'client' and active from profiles where id = auth.uid()), false)
+$$;
+
+-- ¿El usuario actual (activo) tiene alguno de estos roles?  has_role('owner','lawyer')
+create or replace function public.has_role(variadic roles user_role[]) returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select active and role = any(roles) from profiles where id = auth.uid()), false)
+$$;
+
+-- ───────────────────────── Perfiles: protección y visibilidad ─────────────────────────
+-- Nadie cambia su propio rol/despacho/estado; solo las funciones del titular (bandera de transacción).
+create or replace function public.protect_profile_fields() returns trigger language plpgsql as $$
+begin
+  if auth.uid() is not null
+     and coalesce(current_setting('counsel.profile_admin', true), '') <> '1'
+     and (new.role <> old.role or new.firm_id <> old.firm_id or new.client_id is distinct from old.client_id
+          or new.active is distinct from old.active) then
+    raise exception 'No se puede cambiar el rol, el estado ni el despacho';
+  end if;
+  return new;
+end $$;
+
+-- Titular y abogados ven a todo el equipo; el asistente solo su propio perfil (usa team_directory()).
+drop policy if exists profiles_select on profiles;
+create policy profiles_select on profiles for select to authenticated
+  using (id = auth.uid() or (firm_id = current_firm_id() and has_role('owner', 'lawyer')));
+
+-- Directorio mínimo (nombre + rol) para listas de responsables; sin correo ni tarifa.
+create or replace function public.team_directory()
+returns table (id uuid, full_name text, role user_role, active boolean)
+language sql stable security definer set search_path = public as $$
+  select p.id, p.full_name, p.role, p.active
+  from profiles p
+  where p.firm_id = current_firm_id() and p.role <> 'client' and is_staff()
+  order by p.full_name
+$$;
+grant execute on function public.team_directory() to authenticated;
+
+-- Límite MVP: 10 miembros activos (sin contar clientes del portal) por despacho.
+create or replace function public.enforce_team_limit() returns trigger language plpgsql as $$
+begin
+  if new.role <> 'client' and new.active
+     and (tg_op = 'INSERT' or old.active is false or old.role = 'client') then
+    if (select count(*) from profiles
+        where firm_id = new.firm_id and role <> 'client' and active and id <> new.id) >= 10 then
+      raise exception 'Tu despacho ya tiene 10 miembros. Quita a alguien para invitar a otra persona.';
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists t_profiles_limit on profiles;
+create trigger t_profiles_limit before insert or update of active, role on profiles
+  for each row execute function enforce_team_limit();
+
+-- Cambiar rol (solo titular). Nunca a 'client'; nunca deja al despacho sin titular.
+create or replace function public.set_member_role(p_user uuid, p_role user_role) returns void
+language plpgsql security definer set search_path = public as $$
+declare v_target profiles;
+begin
+  if not has_role('owner') then raise exception 'Solo el titular puede cambiar roles'; end if;
+  if p_role = 'client' then raise exception 'Rol no permitido'; end if;
+  select * into v_target from profiles where id = p_user and firm_id = current_firm_id();
+  if not found then raise exception 'No encontré a esa persona en tu despacho'; end if;
+  if v_target.role = 'client' then raise exception 'Esa cuenta es de un cliente del portal'; end if;
+  if v_target.role = 'owner' and p_role <> 'owner'
+     and (select count(*) from profiles where firm_id = v_target.firm_id and role = 'owner' and active and id <> p_user) = 0 then
+    raise exception 'No puedes cambiar el rol del último titular';
+  end if;
+  perform set_config('counsel.profile_admin', '1', true);
+  update profiles set role = p_role where id = p_user;
+  perform set_config('counsel.profile_admin', '', true);
+end $$;
+grant execute on function public.set_member_role(uuid, user_role) to authenticated;
+
+-- Quitar (p_active=false) o reactivar (true) a un miembro. Solo titular.
+create or replace function public.set_member_active(p_user uuid, p_active boolean) returns void
+language plpgsql security definer set search_path = public as $$
+declare v_target profiles;
+begin
+  if not has_role('owner') then raise exception 'Solo el titular puede quitar miembros'; end if;
+  select * into v_target from profiles where id = p_user and firm_id = current_firm_id();
+  if not found then raise exception 'No encontré a esa persona en tu despacho'; end if;
+  if v_target.role = 'client' then raise exception 'Esa cuenta es de un cliente del portal'; end if;
+  if not p_active then
+    if p_user = auth.uid() then raise exception 'No puedes quitarte a ti mismo'; end if;
+    if v_target.role = 'owner'
+       and (select count(*) from profiles where firm_id = v_target.firm_id and role = 'owner' and active and id <> p_user) = 0 then
+      raise exception 'No puedes quitar al último titular';
+    end if;
+  end if;
+  perform set_config('counsel.profile_admin', '1', true);
+  update profiles set active = p_active where id = p_user;
+  perform set_config('counsel.profile_admin', '', true);
+end $$;
+grant execute on function public.set_member_active(uuid, boolean) to authenticated;
+
+-- ───────────────────────── Casos: el asistente no reasigna ni archiva ─────────────────────────
+create or replace function public.guard_case_assistant() returns trigger language plpgsql as $$
+begin
+  if auth.uid() is not null and current_user_role() = 'assistant'
+     and (new.responsible_id is distinct from old.responsible_id or new.deleted_at is distinct from old.deleted_at) then
+    raise exception 'Tu rol no permite cambiar el responsable ni archivar casos';
+  end if;
+  return new;
+end $$;
+drop trigger if exists t_cases_guard_assistant on cases;
+create trigger t_cases_guard_assistant before update on cases for each row execute function guard_case_assistant();
+
+-- ───────────────────────── Políticas por rol ─────────────────────────
+-- (tabla, roles que leen/crean/editan, roles que borran definitivamente). El titular siempre puede todo.
+do $$
+declare
+  r record;
+begin
+  for r in select * from (values
+    ('clients',             '{owner,lawyer,assistant}', '{owner}'),
+    ('cases',               '{owner,lawyer,assistant}', '{owner}'),
+    ('case_events',         '{owner,lawyer,assistant}', '{owner,lawyer}'),
+    ('appointments',        '{owner,lawyer,assistant}', '{owner,lawyer,assistant}'),
+    ('tasks',               '{owner,lawyer,assistant}', '{owner,lawyer,assistant}'),
+    ('documents',           '{owner,lawyer,assistant}', '{owner}'),
+    ('document_versions',   '{owner,lawyer,assistant}', '{owner,lawyer}'),
+    ('ai_conversations',    '{owner,lawyer,assistant}', '{owner,lawyer,assistant}'),
+    ('ai_messages',         '{owner,lawyer,assistant}', '{owner,lawyer,assistant}'),
+    ('notifications',       '{owner,lawyer,assistant}', '{owner,lawyer,assistant}'),
+    ('intake_submissions',  '{owner,lawyer,assistant}', '{owner,lawyer}'),
+    ('appointment_requests','{owner,lawyer,assistant}', '{owner,lawyer}'),
+    ('invoices',            '{owner,lawyer}',           '{owner}'),
+    ('invoice_items',       '{owner,lawyer}',           '{owner,lawyer}'),
+    ('payments',            '{owner,lawyer}',           '{owner}'),
+    ('time_entries',        '{owner,lawyer}',           '{owner,lawyer}')
+  ) as v(tbl, rw, del)
+  loop
+    execute format('drop policy if exists %I on %I', r.tbl || '_staff', r.tbl);
+    execute format('drop policy if exists %I on %I', r.tbl || '_r_select', r.tbl);
+    execute format('drop policy if exists %I on %I', r.tbl || '_r_insert', r.tbl);
+    execute format('drop policy if exists %I on %I', r.tbl || '_r_update', r.tbl);
+    execute format('drop policy if exists %I on %I', r.tbl || '_r_delete', r.tbl);
+    execute format(
+      'create policy %I on %I for select to authenticated using (firm_id = current_firm_id() and has_role(variadic %L::user_role[]))',
+      r.tbl || '_r_select', r.tbl, r.rw);
+    execute format(
+      'create policy %I on %I for insert to authenticated with check (firm_id = current_firm_id() and has_role(variadic %L::user_role[]))',
+      r.tbl || '_r_insert', r.tbl, r.rw);
+    execute format(
+      'create policy %I on %I for update to authenticated using (firm_id = current_firm_id() and has_role(variadic %L::user_role[])) with check (firm_id = current_firm_id() and has_role(variadic %L::user_role[]))',
+      r.tbl || '_r_update', r.tbl, r.rw, r.rw);
+    execute format(
+      'create policy %I on %I for delete to authenticated using (firm_id = current_firm_id() and has_role(variadic %L::user_role[]))',
+      r.tbl || '_r_delete', r.tbl, r.del);
+  end loop;
+end $$;
+
+-- Registro de qué se envió a la IA: lo lee titular/abogado; cualquier personal puede registrar su uso.
+drop policy if exists ai_audit_log_staff on ai_audit_log;
+drop policy if exists ai_audit_log_r_select on ai_audit_log;
+drop policy if exists ai_audit_log_r_insert on ai_audit_log;
+drop policy if exists ai_audit_log_r_delete on ai_audit_log;
+create policy ai_audit_log_r_select on ai_audit_log for select to authenticated
+  using (firm_id = current_firm_id() and has_role('owner', 'lawyer'));
+create policy ai_audit_log_r_insert on ai_audit_log for insert to authenticated
+  with check (firm_id = current_firm_id() and is_staff());
+create policy ai_audit_log_r_delete on ai_audit_log for delete to authenticated
+  using (firm_id = current_firm_id() and has_role('owner'));
+
+-- ===== supabase/migrations/0009_audit_log.sql =====
+-- Counsel · registro de auditoría (Sprint 5-6, E3)
+-- Quién creó/cambió/eliminó/vio qué. Solo el titular lo lee. Nadie lo edita ni lo borra desde la app.
+-- NOTA DE RETENCIÓN: la tabla solo crece. Definir una política (p. ej. archivar >24 meses) antes de producción.
+
+create table if not exists audit_log (
+  id uuid primary key default gen_random_uuid(),
+  firm_id uuid not null default current_firm_id() references firms (id) on delete cascade,
+  user_id uuid references profiles (id) on delete set null,
+  action text not null check (action in ('create', 'update', 'delete', 'view')),
+  entity text not null,            -- nombre de tabla: cases, clients, documents, ...
+  entity_id uuid,
+  summary text not null default '', -- etiqueta corta de la entidad (título, nombre, número)
+  meta jsonb not null default '{}'::jsonb, -- {actor, changes:{campo:{from,to}}}
+  at timestamptz not null default now()
+);
+create index if not exists audit_log_firm_at on audit_log (firm_id, at desc);
+create index if not exists audit_log_entity on audit_log (firm_id, entity, entity_id);
+
+alter table audit_log enable row level security;
+
+drop policy if exists audit_log_owner_select on audit_log;
+create policy audit_log_owner_select on audit_log for select to authenticated
+  using (firm_id = current_firm_id() and has_role('owner'));
+
+-- Las "vistas" las registra la app con la sesión del usuario (logView). Solo 'view', solo a su nombre.
+drop policy if exists audit_log_view_insert on audit_log;
+create policy audit_log_view_insert on audit_log for insert to authenticated
+  with check (firm_id = current_firm_id() and is_staff() and action = 'view' and user_id = auth.uid());
+
+-- Sin políticas de update/delete => RLS los rechaza. Además quitamos el privilegio.
+revoke update, delete, truncate on audit_log from authenticated, anon;
+
+-- ───────────────────────── Trigger genérico ─────────────────────────
+create or replace function public.audit_row() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  v_entity text := tg_argv[0];
+  o jsonb; n jsonb; r jsonb;
+  v_firm uuid; v_id uuid; v_changes jsonb; v_label text; v_actor text; v_user uuid;
+  v_action text;
+  v_skip text[] := array['content_html', 'updated_at', 'created_at', 'tsv', 'embedding', 'preferences'];
+begin
+  if tg_op = 'DELETE' then r := to_jsonb(old); else r := to_jsonb(new); end if;
+  v_firm := (r->>'firm_id')::uuid;
+  v_id := (r->>'id')::uuid;
+  -- Si el despacho se está eliminando en cascada, no hay dónde registrar.
+  if not exists (select 1 from firms where id = v_firm) then return null; end if;
+
+  v_label := left(coalesce(
+    r->>'title', r->>'full_name', r->>'number',
+    case when v_entity = 'payments' then 'Pago de ' || (r->>'amount') end,
+    case when v_entity = 'document_versions' then 'Versión ' || (r->>'version') end,
+    ''), 200);
+
+  if tg_op = 'INSERT' then
+    v_action := 'create'; v_changes := '{}'::jsonb;
+  elsif tg_op = 'DELETE' then
+    v_action := 'delete'; v_changes := '{}'::jsonb;
+  else
+    v_action := 'update';
+    o := to_jsonb(old); n := to_jsonb(new);
+    -- Solo los campos que cambiaron; textos recortados a 200 caracteres; nunca content_html.
+    select coalesce(jsonb_object_agg(e.key, jsonb_build_object('from', left(o->>e.key, 200), 'to', left(n->>e.key, 200))), '{}'::jsonb)
+      into v_changes
+      from jsonb_each(n) e
+      where e.key <> all (v_skip) and e.value is distinct from o->e.key;
+    if v_changes = '{}'::jsonb then return null; end if;
+  end if;
+
+  select id, full_name into v_user, v_actor from profiles where id = auth.uid();
+  insert into audit_log (firm_id, user_id, action, entity, entity_id, summary, meta)
+  values (v_firm, v_user, v_action, v_entity, v_id, v_label,
+          jsonb_build_object('actor', v_actor, 'changes', v_changes));
+  return null;
+end $$;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['cases', 'clients', 'documents', 'document_versions', 'invoices', 'payments'] loop
+    execute format('drop trigger if exists t_audit on %I', t);
+    execute format('create trigger t_audit after insert or update or delete on %I for each row execute function audit_row(%L)', t, t);
+  end loop;
+end $$;
+
+-- Cambios de equipo: alta, cambio de rol, quitar/reactivar.
+drop trigger if exists t_audit on profiles;
+create trigger t_audit after insert or update of role, active or delete on profiles
+  for each row execute function audit_row('profiles');
+
+-- ===== supabase/migrations/0010_security_hardening.sql =====
+-- Counsel · endurecimiento de seguridad (auditoría de la base, Sprint 5-6, tarea C)
+-- Idempotente. No edita 0001–0009: reemplaza funciones/políticas con `create or replace` / `drop policy if exists`.
+--
+-- Hallazgos que corrige:
+--  1. Postgres da EXECUTE a PUBLIC por defecto => anon podía invocar TODAS las funciones de `public`
+--     (register_firm, set_member_role, team_directory, has_role, ...). Solo submit_intake, request_appointment
+--     y firm_public deben ser públicas.
+--  2. anon tenía privilegios de tabla (Supabase los da por defecto). Con RLS no veía filas, pero se quitan
+--     (defensa en profundidad: ninguna política ni grant de tabla para anon).
+--  3. templates_read dejaba que un cliente del portal leyera las plantillas privadas de su despacho.
+--  4. submit_intake / request_appointment: sin límite de frecuencia (cualquiera podía inundar al despacho de
+--     solicitudes y de correos de aviso) y con campos sin límite de largo (email, teléfono, nombre en la cita…).
+--  5. register_firm: sin validación de largo/forma del nombre de la persona y del despacho.
+
+-- ───────────────────────── 1. Funciones: solo las 3 públicas para anon ─────────────────────────
+do $$
+declare f record;
+begin
+  for f in
+    select p.oid::regprocedure as sig
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      -- no tocar funciones de extensiones (pgvector vive en public)
+      and not exists (select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')
+  loop
+    execute format('revoke execute on function %s from public, anon', f.sig);
+    execute format('grant execute on function %s to authenticated', f.sig);
+    if exists (select 1 from pg_roles where rolname = 'service_role') then
+      execute format('grant execute on function %s to service_role', f.sig);
+    end if;
+  end loop;
+end $$;
+
+-- Las funciones futuras tampoco serán públicas por omisión (hay que hacer grant explícito).
+alter default privileges revoke execute on functions from public;
+alter default privileges in schema public revoke execute on functions from anon;
+
+-- ───────────────────────── 2. anon sin acceso directo a tablas ─────────────────────────
+revoke all on all tables in schema public from anon;
+revoke all on all sequences in schema public from anon;
+alter default privileges in schema public revoke all on tables from anon;
+alter default privileges in schema public revoke all on sequences from anon;
+
+-- ───────────────────────── 3. Plantillas: solo el personal (no el portal del cliente) ─────────────────────────
+drop policy if exists templates_read on templates;
+create policy templates_read on templates for select to authenticated
+  using (is_staff() and (firm_id is null or firm_id = current_firm_id()));
+
+-- ───────────────────────── 4. RPC públicos: límites de largo y de frecuencia ─────────────────────────
+create or replace function public.submit_intake(p_slug text, p_name text, p_email text, p_phone text, p_matter text, p_message text)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare v_firm firms; v_id uuid;
+begin
+  select * into v_firm from firms where slug = p_slug and intake_enabled;
+  if not found then raise exception 'Formulario no disponible'; end if;
+  if char_length(btrim(coalesce(p_name,''))) < 2 or char_length(btrim(coalesce(p_message,''))) < 5 then
+    raise exception 'Datos incompletos';
+  end if;
+  if char_length(p_message) > 4000 or char_length(p_name) > 200
+     or char_length(coalesce(p_email,'')) > 254 or char_length(coalesce(p_phone,'')) > 40
+     or char_length(coalesce(p_matter,'')) > 60 then
+    raise exception 'Texto demasiado largo';
+  end if;
+  if coalesce(p_email,'') <> '' and p_email !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' then
+    raise exception 'Correo no válido';
+  end if;
+  -- Freno anti-inundación por despacho (también evita avisos por correo en masa)
+  if (select count(*) from intake_submissions where firm_id = v_firm.id and created_at > now() - interval '1 hour') >= 30 then
+    raise exception 'Demasiadas consultas en poco tiempo. Intenta de nuevo más tarde.';
+  end if;
+  insert into intake_submissions (firm_id, full_name, email, phone, matter, message)
+  values (v_firm.id, btrim(p_name), nullif(p_email,''), nullif(p_phone,''), nullif(p_matter,''), p_message)
+  returning id into v_id;
+  insert into notifications (firm_id, to_email, kind, subject, body)
+  select v_firm.id, p.email, 'intake', 'Nueva consulta: ' || left(btrim(p_name), 120), left(p_message, 500)
+  from profiles p where p.firm_id = v_firm.id and p.role = 'owner' and p.active and p.email is not null;
+  return v_id;
+end $$;
+
+create or replace function public.request_appointment(p_slug text, p_name text, p_email text, p_phone text, p_reason text, p_preferred timestamptz)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare v_firm firms; v_id uuid;
+begin
+  select * into v_firm from firms where slug = p_slug and bot_enabled;
+  if not found then raise exception 'Reserva no disponible'; end if;
+  if char_length(btrim(coalesce(p_name,''))) < 2 then raise exception 'Datos incompletos'; end if;
+  if char_length(p_name) > 200 or char_length(coalesce(p_email,'')) > 254 or char_length(coalesce(p_phone,'')) > 40 then
+    raise exception 'Texto demasiado largo';
+  end if;
+  if coalesce(p_email,'') <> '' and p_email !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' then
+    raise exception 'Correo no válido';
+  end if;
+  if p_preferred is null or p_preferred < now() then raise exception 'La fecha debe ser futura'; end if;
+  if p_preferred > now() + interval '2 years' then raise exception 'La fecha es demasiado lejana'; end if;
+  if (select count(*) from appointment_requests where firm_id = v_firm.id and created_at > now() - interval '1 hour') >= 20 then
+    raise exception 'Demasiadas solicitudes en poco tiempo. Intenta de nuevo más tarde.';
+  end if;
+  insert into appointment_requests (firm_id, full_name, email, phone, reason, preferred_at)
+  values (v_firm.id, btrim(p_name), nullif(p_email,''), nullif(p_phone,''), left(p_reason, 1000), p_preferred)
+  returning id into v_id;
+  insert into notifications (firm_id, to_email, kind, subject, body)
+  select v_firm.id, p.email, 'cita', 'Solicitud de cita: ' || left(btrim(p_name), 120), coalesce(left(p_reason, 300), '')
+  from profiles p where p.firm_id = v_firm.id and p.role = 'owner' and p.active and p.email is not null;
+  return v_id;
+end $$;
+
+grant execute on function public.submit_intake(text, text, text, text, text, text) to anon, authenticated;
+grant execute on function public.request_appointment(text, text, text, text, text, timestamptz) to anon, authenticated;
+grant execute on function public.firm_public(text) to anon, authenticated;
+
+-- ───────────────────────── 5. register_firm: validación de entradas ─────────────────────────
+create or replace function public.register_firm(p_firm_name text, p_full_name text)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare
+  v_firm uuid;
+  v_slug text;
+  v_email text;
+  v_name text := btrim(coalesce(p_firm_name, ''));
+  v_person text := btrim(coalesce(p_full_name, ''));
+begin
+  if auth.uid() is null then raise exception 'No autenticado'; end if;
+  if exists (select 1 from profiles where id = auth.uid()) then raise exception 'Ya tienes un despacho'; end if;
+  if char_length(v_name) < 2 or char_length(v_name) > 120 then raise exception 'El nombre del despacho debe tener entre 2 y 120 caracteres'; end if;
+  if char_length(v_person) < 2 or char_length(v_person) > 200 then raise exception 'Tu nombre debe tener entre 2 y 200 caracteres'; end if;
+  v_slug := lower(regexp_replace(translate(v_name, 'áéíóúñÁÉÍÓÚÑ', 'aeiounAEIOUN'), '[^a-zA-Z0-9]+', '-', 'g'));
+  v_slug := trim(both '-' from v_slug);
+  if char_length(v_slug) < 3 then v_slug := 'despacho-' || substr(gen_random_uuid()::text, 1, 6); end if;
+  v_slug := trim(both '-' from left(v_slug, 32));
+  if char_length(v_slug) < 3 or exists (select 1 from firms where slug = v_slug) then
+    v_slug := left(v_slug, 32) || '-' || substr(gen_random_uuid()::text, 1, 5);
+  end if;
+  insert into firms (name, slug) values (v_name, v_slug) returning id into v_firm;
+  select email into v_email from auth.users where id = auth.uid();
+  insert into profiles (id, firm_id, full_name, email, role) values (auth.uid(), v_firm, v_person, v_email, 'owner');
+  return v_firm;
+end $$;
+
+-- ===== supabase/migrations/0011_indexes.sql =====
+-- Counsel · índices faltantes (llaves foráneas y consultas frecuentes por despacho/fecha). Idempotente.
+-- Postgres no indexa las FK automáticamente: sin índice, borrar/consultar por la FK recorre toda la tabla.
+
+-- Perfiles / casos
+create index if not exists profiles_client_id on profiles (client_id) where client_id is not null;
+create index if not exists cases_responsible on cases (responsible_id) where responsible_id is not null;
+create index if not exists cases_firm_updated on cases (firm_id, updated_at desc) where deleted_at is null;
+create index if not exists case_events_firm on case_events (firm_id);
+create index if not exists case_events_created_by on case_events (created_by) where created_by is not null;
+
+-- Agenda (agenda por fecha, portal por caso, cron de recordatorios por fecha)
+create index if not exists appointments_case on appointments (case_id) where case_id is not null;
+create index if not exists appointments_client on appointments (client_id) where client_id is not null;
+create index if not exists appointments_created_by on appointments (created_by) where created_by is not null;
+create index if not exists appointments_reminder on appointments (starts_at) where reminded_at is null and status = 'programada';
+
+-- Tareas
+create index if not exists tasks_case on tasks (case_id) where case_id is not null;
+create index if not exists tasks_assigned on tasks (assigned_to, due_at) where assigned_to is not null and done_at is null;
+
+-- Documentos
+create index if not exists documents_case on documents (case_id) where deleted_at is null and case_id is not null;
+create index if not exists documents_client on documents (client_id) where client_id is not null;
+create index if not exists documents_firm_updated on documents (firm_id, updated_at desc) where deleted_at is null;
+create index if not exists documents_created_by on documents (created_by) where created_by is not null;
+create index if not exists document_versions_firm on document_versions (firm_id);
+create index if not exists document_versions_created_by on document_versions (created_by) where created_by is not null;
+create index if not exists templates_firm on templates (firm_id) where firm_id is not null;
+
+-- Cobros y tiempo
+create index if not exists invoices_client on invoices (client_id);
+create index if not exists invoices_case on invoices (case_id) where case_id is not null;
+create index if not exists invoices_firm_issue on invoices (firm_id, issue_date desc);
+create index if not exists invoice_items_invoice on invoice_items (invoice_id);
+create index if not exists invoice_items_firm on invoice_items (firm_id);
+create index if not exists payments_invoice on payments (invoice_id);
+create index if not exists payments_firm_paid on payments (firm_id, paid_on desc);
+create index if not exists time_entries_case on time_entries (case_id) where case_id is not null;
+create index if not exists time_entries_user on time_entries (user_id, worked_on desc);
+create index if not exists time_entries_invoice on time_entries (invoice_id) where invoice_id is not null;
+
+-- IA
+create index if not exists ai_conversations_user on ai_conversations (user_id, created_at desc);
+create index if not exists ai_conversations_firm on ai_conversations (firm_id);
+create index if not exists ai_conversations_case on ai_conversations (case_id) where case_id is not null;
+create index if not exists ai_messages_conversation on ai_messages (conversation_id, created_at);
+create index if not exists ai_messages_firm on ai_messages (firm_id);
+create index if not exists ai_audit_log_user_created on ai_audit_log (user_id, created_at desc) where user_id is not null; -- límite diario de uso
+create index if not exists ai_audit_log_firm on ai_audit_log (firm_id, created_at desc);
+
+-- Consultas, citas y avisos
+create index if not exists intake_firm_created on intake_submissions (firm_id, created_at desc);
+create index if not exists intake_client on intake_submissions (client_id) where client_id is not null;
+create index if not exists appt_requests_firm_created on appointment_requests (firm_id, created_at desc);
+create index if not exists appt_requests_appointment on appointment_requests (appointment_id) where appointment_id is not null;
+create index if not exists notifications_firm on notifications (firm_id);
+create index if not exists notifications_user on notifications (user_id) where user_id is not null;
+create index if not exists terms_acceptances_firm on terms_acceptances (firm_id);
+
+-- Auditoría (0009): la FK user_id no tenía índice
+create index if not exists audit_log_user on audit_log (user_id) where user_id is not null;
+
+-- ===== supabase/migrations/0012_portal_privacy.sql =====
+-- Privacidad del portal: RLS no filtra columnas, y `clients.notes` son notas internas del abogado.
+-- El portal no lee `clients` (usa `cases`, `case_events`, `appointments`, `documents`, `invoices`), así que se quita
+-- el acceso directo del cliente a su fila de `clients`.
+drop policy if exists clients_portal on clients;
+
+-- ===== supabase/migrations/0013_search_indexes.sql =====
+-- Índices para la búsqueda del lado del servidor (ilike '%texto%') en listas largas.
+-- pg_trgm acelera los patrones con comodín al inicio. Es opcional: si la extensión no está
+-- disponible (p. ej. el entorno de pruebas con PGlite sin pg_trgm), la migración no falla
+-- y las búsquedas siguen funcionando, solo sin índice.
+do $$
+begin
+  create extension if not exists pg_trgm;
+
+  create index if not exists clients_full_name_trgm on clients using gin (full_name gin_trgm_ops);
+  create index if not exists clients_ci_nit_trgm on clients using gin (ci_nit gin_trgm_ops);
+  create index if not exists cases_title_trgm on cases using gin (title gin_trgm_ops);
+  create index if not exists cases_case_number_trgm on cases using gin (case_number gin_trgm_ops);
+  create index if not exists cases_opponent_trgm on cases using gin (opponent gin_trgm_ops);
+  create index if not exists documents_title_trgm on documents using gin (title gin_trgm_ops);
+exception when others then
+  raise notice 'Índices de búsqueda omitidos (pg_trgm no disponible): %', sqlerrm;
+end $$;
+
+-- Orden y paginación estables de las listas.
+create index if not exists cases_firm_stage_updated_idx on cases (firm_id, stage, updated_at desc) where deleted_at is null;
+create index if not exists invoices_firm_created_idx on invoices (firm_id, created_at desc);
+create index if not exists tasks_firm_done_idx on tasks (firm_id, done_at);

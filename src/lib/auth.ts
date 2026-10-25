@@ -11,6 +11,7 @@ export async function requireStaff() {
   const { data: profile } = await supabase.from("profiles").select("*").eq("id", auth.user.id).maybeSingle<Profile>();
   if (!profile) redirect("/bienvenida"); // usuario sin despacho: completar registro
   if (profile.role === "client") redirect("/portal");
+  if (profile.active === false) redirect("/acceso-desactivado"); // el titular quitó este acceso
   const { data: firm } = await supabase.from("firms").select("*").eq("id", profile.firm_id).single<Firm>();
   return { supabase, user: auth.user, profile, firm: firm! };
 }

@@ -8,10 +8,12 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Field, Select } from "@/components/ui/field";
 import { TextWithDictation } from "@/components/ui/text-with-dictation";
 import { fail, toastWithUndo } from "@/components/ui/undo-toast";
+import { Paginacion } from "@/components/paginacion/paginacion";
 import { EntryDialog, type EntryDraft } from "./entry-dialog";
 import { deleteTimeEntry, restoreTimeEntry } from "@/app/(app)/tiempo/actions";
 import { fmtDate, fmtMinutes, fmtMoney } from "@/lib/format";
 import { fromCents } from "@/lib/cobros/money";
+import type { TimeSummary } from "@/lib/paginacion/tiempo-resumen";
 import { entryAmountCents, formatClock, groupByDay, minutesByCase, parseTimerState, secondsToMinutes, type TimerState } from "@/lib/cobros/time";
 
 export interface Entry {
@@ -25,8 +27,12 @@ const read = (k: string) => { try { return localStorage.getItem(k); } catch { re
 const write = (k: string, v: string | null) => { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* sin almacenamiento */ } };
 
 export function TimeWorkspace({
-  today, defaultRate, cases, entries, openManual,
-}: { today: string; defaultRate: number; cases: { id: string; title: string }[]; entries: Entry[]; openManual: boolean }) {
+  today, defaultRate, cases, entries, openManual, summary, total = entries.length, page = 1, pageSize = 25,
+}: {
+  today: string; defaultRate: number; cases: { id: string; title: string }[]; entries: Entry[]; openManual: boolean;
+  /** Totales de TODO el mes (el servidor los calcula aparte; `entries` es solo la página actual). */
+  summary?: TimeSummary; total?: number; page?: number; pageSize?: number;
+}) {
   const router = useRouter();
   const caseName = (id: string | null) => cases.find((c) => c.id === id)?.title ?? "Sin caso";
 
@@ -87,10 +93,11 @@ export function TimeWorkspace({
   );
 
   // ── Resumen del mes ──
-  const days = groupByDay(entries);
-  const totalMin = entries.reduce((s, e) => s + e.minutes, 0);
-  const totalCents = days.reduce((s, d) => s + d.amountCents, 0);
-  const perCase = minutesByCase(entries);
+  // Un día puede quedar partido entre dos páginas: el total del día sale de los agregados del mes.
+  const days = groupByDay(entries).map((d) => ({ ...d, ...(summary?.dayTotals[d.day] ?? {}) }));
+  const totalMin = summary?.totalMin ?? entries.reduce((s, e) => s + e.minutes, 0);
+  const totalCents = summary?.totalCents ?? days.reduce((s, d) => s + d.amountCents, 0);
+  const perCase = summary?.perCase ?? minutesByCase(entries);
 
   async function remove(e: Entry) {
     const r = await deleteTimeEntry(e.id);
@@ -142,14 +149,14 @@ export function TimeWorkspace({
       <section aria-labelledby="mes-t" className="grid gap-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 id="mes-t" className="text-[length:var(--text-heading-sm)] font-semibold">Este mes</h2>
-          {entries.length > 0 && (
+          {total > 0 && (
             <p className="text-ink-2">
               {fmtMinutes(totalMin)} · estimado <span className="tabular-nums">{fmtMoney(fromCents(totalCents))}</span>
             </p>
           )}
         </div>
 
-        {entries.length === 0 ? (
+        {total === 0 ? (
           <EmptyState
             title="Aún no hay horas este mes"
             description="Pulsa Empezar cuando comiences a trabajar, o agrega el tiempo a mano."
@@ -202,6 +209,7 @@ export function TimeWorkspace({
                 </ul>
               </Card>
             ))}
+            <Paginacion total={total} page={page} pageSize={pageSize} basePath="/tiempo" noun="entradas" />
           </>
         )}
       </section>

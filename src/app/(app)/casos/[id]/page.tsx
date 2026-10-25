@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { z } from "zod";
 import { requireStaff } from "@/lib/auth";
+import { LogView } from "@/components/auditoria/log-view";
 import { CasoDetalle } from "@/components/casos/caso-detalle";
 import type { Appointment, Case, CaseEvent, Doc, Task } from "@/lib/db/types";
 
@@ -20,6 +21,8 @@ export default async function CasoPage({ params }: { params: Promise<{ id: strin
     supabase.from("documents").select("*").eq("case_id", id).is("deleted_at", null).order("updated_at", { ascending: false }),
   ]);
   return (
+    <>
+    <LogView entity="cases" id={id} />
     <CasoDetalle
       caso={caso}
       clientName={(client?.full_name as string | undefined) ?? "Cliente archivado"}
@@ -28,5 +31,6 @@ export default async function CasoPage({ params }: { params: Promise<{ id: strin
       tasks={(tasks ?? []) as Task[]}
       documents={(docs ?? []) as Doc[]}
     />
+    </>
   );
 }

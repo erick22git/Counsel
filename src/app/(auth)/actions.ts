@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { acceptTerms } from "@/lib/legal/actions";
 import { createClient } from "@/lib/supabase/server";
+import { clientIp, rateLimitByKey, rateLimitReset } from "@/lib/security/rate-limit";
+import { needsMfaChallenge, safeNextPath } from "@/lib/security/mfa";
 
 export interface FormState { error?: string }
 
@@ -11,18 +13,29 @@ const loginSchema = z.object({
   password: z.string().min(1, "Escribe tu contraseña"),
 });
 
-function safeNext(v: FormDataEntryValue | null) {
-  const s = typeof v === "string" ? v : "";
-  return s.startsWith("/") && !s.startsWith("//") ? s : "/panel";
-}
+const safeNext = (v: FormDataEntryValue | null) => safeNextPath(v);
 
 export async function signIn(_: FormState, form: FormData): Promise<FormState> {
   const parsed = loginSchema.safeParse(Object.fromEntries(form));
   if (!parsed.success) return { error: parsed.error.issues[0].message };
+  // Límite de intentos: por IP+correo (8 en 15 min) y por IP (40 en 15 min).
+  const ip = await clientIp();
+  const key = `${ip}:${parsed.data.email.toLowerCase()}`;
+  const [a, b] = await Promise.all([
+    rateLimitByKey("login", key, 8, 15 * 60_000),
+    rateLimitByKey("login-ip", ip, 40, 15 * 60_000),
+  ]);
+  const blocked = !a.ok ? a : !b.ok ? b : null;
+  if (blocked) return { error: blocked.message };
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
   if (error) return { error: "El correo o la contraseña no coinciden. Revísalos e intenta de nuevo." };
-  redirect(safeNext(form.get("siguiente")));
+  await rateLimitReset("login", key);
+  // MFA opcional: si tiene factor verificado, falta el segundo paso.
+  const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  const next = safeNext(form.get("siguiente"));
+  if (needsMfaChallenge(aal)) redirect(`/login/verificar?siguiente=${encodeURIComponent(next)}`);
+  redirect(next);
 }
 
 const registerSchema = z.object({
@@ -37,6 +50,8 @@ export async function signUp(_: FormState, form: FormData): Promise<FormState> {
   const parsed = registerSchema.safeParse(Object.fromEntries(form));
   if (!parsed.success) return { error: parsed.error.issues[0].message };
   const { email, password, full_name, firm_name } = parsed.data;
+  const lim = await rateLimitByKey("registro", `${await clientIp()}:${email.toLowerCase()}`, 5, 30 * 60_000);
+  if (!lim.ok) return { error: lim.message };
   const supabase = await createClient();
   const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name } } });
   if (error) return { error: error.message.includes("registered") ? "Ya existe una cuenta con ese correo." : "No pudimos crear la cuenta. Intenta de nuevo." };

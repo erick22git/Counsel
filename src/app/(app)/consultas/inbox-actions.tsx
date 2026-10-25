@@ -45,7 +45,7 @@ export function RequestActions({ id }: { id: string }) {
   const router = useRouter();
   return (
     <div className="flex flex-wrap gap-2">
-      <Button variant="primary" onClick={async () => { const r = await confirmRequest(id); if (!r.ok) return fail(r.error); toast.success("Cita confirmada y agregada a tu agenda"); router.refresh(); }}>
+      <Button variant="primary" onClick={async () => { const r = await confirmRequest(id); if (!r.ok) return fail(r.error); toast.success("Cita confirmada y agregada a tu agenda"); if (r.notice) toast.warning(r.notice); router.refresh(); }}>
         Confirmar cita
       </Button>
       <Button variant="outline" onClick={async () => { await rejectRequest(id); toast("Solicitud rechazada"); router.refresh(); }}>No puedo en ese horario</Button>

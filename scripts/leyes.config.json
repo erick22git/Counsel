@@ -1,10 +1,23 @@
 [
-  { "code": "CPE", "title": "Constitución Política del Estado", "page": "Constitución Política del Estado", "kind": "constitución" },
-  { "code": "CC", "title": "Código Civil", "page": "Código Civil", "kind": "código" },
-  { "code": "CPC", "title": "Código Procesal Civil", "page": "Código Procesal Civil", "kind": "código" },
-  { "code": "CP", "title": "Código Penal", "page": "Código Penal", "kind": "código" },
-  { "code": "CPP", "title": "Código de Procedimiento Penal", "page": "Código de Procedimiento Penal", "kind": "código" },
-  { "code": "CFAM", "title": "Código de las Familias y del Proceso Familiar", "page": "Código de las Familias y del Proceso Familiar", "kind": "código" },
-  { "code": "LGT", "title": "Ley General del Trabajo", "page": "Ley General del Trabajo", "kind": "ley" },
-  { "code": "CCOM", "title": "Código de Comercio", "page": "Código de Comercio", "kind": "código" }
+  {
+    "code": "CPE",
+    "title": "Constitución Política del Estado (2009)",
+    "page": "",
+    "norm": "BO-CPE-20090207",
+    "kind": "constitución"
+  },
+  {
+    "code": "CPC",
+    "title": "Código Procesal Civil (Ley 439)",
+    "page": "",
+    "norm": "BO-L-N439",
+    "kind": "código"
+  },
+  {
+    "code": "CFAM",
+    "title": "Código de las Familias y del Proceso Familiar (Ley 603)",
+    "page": "",
+    "norm": "BO-L-N603",
+    "kind": "código"
+  }
 ]

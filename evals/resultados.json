@@ -1,0 +1,214 @@
+{
+  "generatedAt": "2026-10-25T14:13:19.466Z",
+  "provider": {
+    "id": "mock",
+    "model": "mock-1"
+  },
+  "retrieval": "fixture",
+  "questionsFile": "evals/preguntas-fixture.json",
+  "official": false,
+  "aviso": "AVISO: preguntas NO verificadas por un abogado. Estos números sirven para ver tendencias y validar el arnés; NO son una métrica oficial de calidad.",
+  "unverified": 8,
+  "metrics": {
+    "respondibles": 6,
+    "controles": 2,
+    "precision_cita": 1,
+    "precision_norma": 1,
+    "tasa_falso_rechazo": 0,
+    "tasa_rechazo_correcto": 1,
+    "marcadores_invalidos": 0,
+    "errores": 0,
+    "por_materia": {
+      "civil": {
+        "total": 2,
+        "cita_correcta": 2,
+        "cita_norma": 2,
+        "falsos_rechazos": 0,
+        "controles": 0,
+        "rechazos_correctos": 0
+      },
+      "procesal": {
+        "total": 2,
+        "cita_correcta": 2,
+        "cita_norma": 2,
+        "falsos_rechazos": 0,
+        "controles": 0,
+        "rechazos_correctos": 0
+      },
+      "laboral": {
+        "total": 2,
+        "cita_correcta": 2,
+        "cita_norma": 2,
+        "falsos_rechazos": 0,
+        "controles": 0,
+        "rechazos_correctos": 0
+      },
+      "fuera_de_base": {
+        "total": 0,
+        "cita_correcta": 0,
+        "cita_norma": 0,
+        "falsos_rechazos": 0,
+        "controles": 2,
+        "rechazos_correctos": 2
+      }
+    }
+  },
+  "notes": [
+    "Corpus ficticio (evals/corpus-fixture.json): valida el arnés, no la calidad legal real."
+  ],
+  "results": [
+    {
+      "id": "fx-01",
+      "materia": "civil",
+      "tipo": "respondible",
+      "pregunta": "¿Cuándo debe pagarse el canon del arrendamiento cada mes?",
+      "verificado": false,
+      "esperado": "DEMO-ARR Artículo 2",
+      "cita_correcta": true,
+      "cita_norma": true,
+      "falso_rechazo": false,
+      "rechazo_correcto": false,
+      "respondio_sin_base": false,
+      "citadas": [
+        "DEMO-ARR Artículo 2"
+      ],
+      "fuentes_recuperadas": [
+        "DEMO-ARR Artículo 2",
+        "DEMO-ARR Artículo 1"
+      ],
+      "marcadores_invalidos": 0
+    },
+    {
+      "id": "fx-02",
+      "materia": "civil",
+      "tipo": "respondible",
+      "pregunta": "¿Qué pasa si el inquilino no paga dos meses de canon?",
+      "verificado": false,
+      "esperado": "DEMO-ARR Artículo 3",
+      "cita_correcta": true,
+      "cita_norma": true,
+      "falso_rechazo": false,
+      "rechazo_correcto": false,
+      "respondio_sin_base": false,
+      "citadas": [
+        "DEMO-ARR Artículo 3"
+      ],
+      "fuentes_recuperadas": [
+        "DEMO-ARR Artículo 3"
+      ],
+      "marcadores_invalidos": 0
+    },
+    {
+      "id": "fx-03",
+      "materia": "procesal",
+      "tipo": "respondible",
+      "pregunta": "¿En cuántos días hay que contestar una demanda?",
+      "verificado": false,
+      "esperado": "DEMO-PLZ Artículo 1",
+      "cita_correcta": true,
+      "cita_norma": true,
+      "falso_rechazo": false,
+      "rechazo_correcto": false,
+      "respondio_sin_base": false,
+      "citadas": [
+        "DEMO-PLZ Artículo 1"
+      ],
+      "fuentes_recuperadas": [
+        "DEMO-PLZ Artículo 1"
+      ],
+      "marcadores_invalidos": 0
+    },
+    {
+      "id": "fx-04",
+      "materia": "procesal",
+      "tipo": "respondible",
+      "pregunta": "¿Cuánto tiempo hay para apelar una sentencia?",
+      "verificado": false,
+      "esperado": "DEMO-PLZ Artículo 2",
+      "cita_correcta": true,
+      "cita_norma": true,
+      "falso_rechazo": false,
+      "rechazo_correcto": false,
+      "respondio_sin_base": false,
+      "citadas": [
+        "DEMO-PLZ Artículo 2"
+      ],
+      "fuentes_recuperadas": [
+        "DEMO-PLZ Artículo 2"
+      ],
+      "marcadores_invalidos": 0
+    },
+    {
+      "id": "fx-05",
+      "materia": "laboral",
+      "tipo": "respondible",
+      "pregunta": "¿Cuántas horas diarias puede durar la jornada de trabajo?",
+      "verificado": false,
+      "esperado": "DEMO-LAB Artículo 1",
+      "cita_correcta": true,
+      "cita_norma": true,
+      "falso_rechazo": false,
+      "rechazo_correcto": false,
+      "respondio_sin_base": false,
+      "citadas": [
+        "DEMO-LAB Artículo 1"
+      ],
+      "fuentes_recuperadas": [
+        "DEMO-LAB Artículo 1"
+      ],
+      "marcadores_invalidos": 0
+    },
+    {
+      "id": "fx-06",
+      "materia": "laboral",
+      "tipo": "respondible",
+      "pregunta": "¿Cuántos días de vacación tiene un trabajador por año?",
+      "verificado": false,
+      "esperado": "DEMO-LAB Artículo 2",
+      "cita_correcta": true,
+      "cita_norma": true,
+      "falso_rechazo": false,
+      "rechazo_correcto": false,
+      "respondio_sin_base": false,
+      "citadas": [
+        "DEMO-LAB Artículo 2"
+      ],
+      "fuentes_recuperadas": [
+        "DEMO-LAB Artículo 2"
+      ],
+      "marcadores_invalidos": 0
+    },
+    {
+      "id": "fx-c1",
+      "materia": "fuera_de_base",
+      "tipo": "control",
+      "pregunta": "¿Cuál es la receta del chupe de pollo?",
+      "verificado": false,
+      "esperado": "rechazo",
+      "cita_correcta": false,
+      "cita_norma": false,
+      "falso_rechazo": false,
+      "rechazo_correcto": true,
+      "respondio_sin_base": false,
+      "citadas": [],
+      "fuentes_recuperadas": [],
+      "marcadores_invalidos": 0
+    },
+    {
+      "id": "fx-c2",
+      "materia": "fuera_de_base",
+      "tipo": "control",
+      "pregunta": "¿Quién ganó el partido de fútbol de ayer?",
+      "verificado": false,
+      "esperado": "rechazo",
+      "cita_correcta": false,
+      "cita_norma": false,
+      "falso_rechazo": false,
+      "rechazo_correcto": true,
+      "respondio_sin_base": false,
+      "citadas": [],
+      "fuentes_recuperadas": [],
+      "marcadores_invalidos": 0
+    }
+  ]
+}

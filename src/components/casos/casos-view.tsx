@@ -2,29 +2,43 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { LayoutGrid, List, Plus, Search } from "lucide-react";
+import { LayoutGrid, List, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, PageHeader, Pill } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Input, Select } from "@/components/ui/field";
+import { Select } from "@/components/ui/field";
+import { BuscadorLista } from "@/components/paginacion/buscador-lista";
+import { Paginacion } from "@/components/paginacion/paginacion";
 import { fail, toastWithUndo } from "@/components/ui/undo-toast";
 import { Kanban } from "@/components/casos/kanban";
 import { MoveMenu, type CaseView } from "@/components/casos/caso-card";
 import { NuevoCasoDialog, type ClientOption } from "@/components/casos/nuevo-caso-dialog";
+import { buildHref } from "@/lib/paginacion/params";
 import { applyPlan, planMove, stageLabel } from "@/lib/casos/board";
-import { filterCases } from "@/lib/casos/filters";
 import { fmtDateTime, MATTERS, STAGES } from "@/lib/format";
 import { moveCaseAction, undoMoveAction } from "@/app/(app)/casos/actions";
 import type { Stage } from "@/lib/db/types";
 import { cn } from "@/lib/utils";
 
 export function CasosView({
-  cases: initial, clients, initialOpen, presetClientId,
+  cases: initial, clients, initialOpen, presetClientId, vista = "tablero", q = "", materia = "", hasAny = initial.length > 0, total = initial.length, page = 1, pageSize = 25, truncatedStages = [], perColumn = 200,
 }: {
   cases: CaseView[];
   clients: ClientOption[];
   initialOpen: boolean;
   presetClientId: string | null;
+  /** Modo de vista y filtros: vienen de la URL y se aplican en el servidor. */
+  vista?: "tablero" | "lista";
+  q?: string;
+  materia?: string;
+  /** Hay casos en el despacho (sin contar filtros). */
+  hasAny?: boolean;
+  total?: number;
+  page?: number;
+  pageSize?: number;
+  /** Etapas del tablero que superan el tope por columna. */
+  truncatedStages?: string[];
+  perColumn?: number;
 }) {
   const router = useRouter();
   const [cases, setCases] = React.useState(initial);
@@ -33,16 +47,11 @@ export function CasosView({
     setSeen(initial);
     setCases(initial);
   }
-  const [view, setView] = React.useState<"tablero" | "lista">("tablero");
-  const [text, setText] = React.useState("");
-  const [matter, setMatter] = React.useState("");
   const [open, setOpen] = React.useState(initialOpen);
 
-  const clientName = React.useMemo(() => {
-    const m = new Map(clients.map((c) => [c.id, c.full_name]));
-    return (id: string) => m.get(id) ?? "";
-  }, [clients]);
-  const shown = React.useMemo(() => filterCases(cases, { text, matter, clientName }), [cases, text, matter, clientName]);
+  const shown = cases;
+  const view = vista;
+  const keep = { q, materia, vista: vista === "lista" ? "lista" : "" };
 
   function onOpenChange(o: boolean) {
     setOpen(o);
@@ -81,7 +90,7 @@ export function CasosView({
   );
   const dialog = <NuevoCasoDialog open={open} onOpenChange={onOpenChange} clients={clients} presetClientId={presetClientId} />;
 
-  if (initial.length === 0) {
+  if (!hasAny) {
     return (
       <>
         <PageHeader title="Casos" subtitle="Aquí verás todos tus casos ordenados por etapa." />
@@ -99,39 +108,46 @@ export function CasosView({
     <>
       <PageHeader title="Casos" subtitle="Arrastra las tarjetas entre columnas o usa “Mover a…”." action={newButton} />
 
-      <div className="mb-5 flex flex-wrap items-end gap-3">
-        <div className="relative min-w-60 flex-1 sm:max-w-md">
-          <label htmlFor="buscar-caso" className="sr-only">Buscar caso</label>
-          <Search aria-hidden size={20} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-ink-3" />
-          <Input id="buscar-caso" type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder="Buscar por título, cliente o expediente" className="pl-12" autoComplete="off" />
-        </div>
-        <div className="min-w-44">
-          <label htmlFor="filtro-materia" className="sr-only">Filtrar por materia</label>
-          <Select id="filtro-materia" value={matter} onChange={(e) => setMatter(e.target.value)}>
+      <BuscadorLista
+        basePath="/casos" q={q} id="buscar-caso" label="Buscar caso" placeholder="Buscar por título, cliente, expediente o parte contraria"
+        params={{ vista: vista === "lista" ? "lista" : "" }} active={Boolean(q || materia)} clearHref={vista === "lista" ? "/casos?vista=lista" : "/casos"}
+      >
+        <div className="grid min-w-44 gap-1.5">
+          <label htmlFor="filtro-materia" className="font-medium">Materia</label>
+          <Select id="filtro-materia" name="materia" defaultValue={materia}>
             <option value="">Todas las materias</option>
             {Object.entries(MATTERS).map(([id, l]) => <option key={id} value={id}>{l}</option>)}
           </Select>
         </div>
         <div role="group" aria-label="Forma de ver los casos" className="inline-flex rounded-[var(--radius-btn)] border border-line-strong bg-surface p-1">
           {([["tablero", "Tablero", LayoutGrid], ["lista", "Lista", List]] as const).map(([id, label, Icon]) => (
-            <button
-              key={id} type="button" aria-pressed={view === id} onClick={() => setView(id)}
+            <Link
+              key={id} href={buildHref("/casos", { q, materia, vista: id === "lista" ? "lista" : "" }, 1)} aria-current={view === id ? "page" : undefined}
               className={cn(
                 "press inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-4",
                 view === id ? "bg-accent-soft font-medium text-accent" : "text-ink-2 hover:bg-surface-2"
               )}
             >
               <Icon size={18} aria-hidden /> {label}
-            </button>
+            </Link>
           ))}
         </div>
-      </div>
+      </BuscadorLista>
 
-      <p className="sr-only" aria-live="polite">{shown.length} casos</p>
+      <p className="sr-only" aria-live="polite">{total} casos</p>
       {shown.length === 0 ? (
         <Card className="text-center text-ink-2">Ningún caso coincide con tu búsqueda. Borra el texto o elige “Todas las materias”.</Card>
       ) : view === "tablero" ? (
-        <Kanban cases={shown} onMove={move} />
+        <>
+          {truncatedStages.length > 0 && (
+            <p className="mb-3 rounded-[var(--radius-card)] border border-line bg-surface-2 p-3 text-ink-2" role="status">
+              Mostrando las {perColumn} más recientes; usa la lista para ver el resto.{" "}
+              <span className="text-ink-3">(Columnas: {truncatedStages.map((s) => stageLabel(STAGES, s)).join(", ")}.)</span>{" "}
+              <Link href={buildHref("/casos", { q, materia, vista: "lista" }, 1)} className="font-medium text-accent underline underline-offset-4">Ver la lista</Link>
+            </p>
+          )}
+          <Kanban cases={shown} onMove={move} />
+        </>
       ) : (
         <ul className="grid gap-3">
           {shown.map((c) => (
@@ -152,6 +168,7 @@ export function CasosView({
           ))}
         </ul>
       )}
+      {view === "lista" && <Paginacion total={total} page={page} pageSize={pageSize} basePath="/casos" params={keep} noun="casos" />}
       {dialog}
     </>
   );

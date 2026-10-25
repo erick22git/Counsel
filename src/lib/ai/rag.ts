@@ -1,22 +1,16 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getEmbedder, embedderMatchesDb } from "./providers";
 import { toSearchQuery, type SourceForPrompt } from "./text";
 
 export type LawHit = SourceForPrompt & { id: string; rank: number };
 
 async function embedQuery(q: string): Promise<number[] | null> {
-  const key = process.env.VOYAGE_API_KEY;
-  if (!key) return null;
   try {
-    const r = await fetch("https://api.voyageai.com/v1/embeddings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({ input: [q], model: "voyage-3", input_type: "query" }),
-      signal: AbortSignal.timeout(6000),
-    });
-    if (!r.ok) return null;
-    const j = (await r.json()) as { data?: { embedding: number[] }[] };
-    return j.data?.[0]?.embedding ?? null;
+    const e = getEmbedder();
+    // Si la dimensión del modelo no coincide con la columna vector(N), no se usan vectores (solo texto completo).
+    if (!e || !embedderMatchesDb(e)) return null;
+    return (await e.embed([q], "query"))[0] ?? null;
   } catch {
     return null;
   }
@@ -27,7 +21,7 @@ type Row = {
   source_name: string; source_url: string | null; license: string; is_demo: boolean; rank: number;
 };
 
-/** Búsqueda híbrida: texto completo (siempre) + vectores (si hay VOYAGE_API_KEY), fusionados por RRF. Respeta RLS (cliente del usuario). */
+/** Búsqueda híbrida: texto completo (siempre) + vectores (si hay embeddings compatibles), fusionados por RRF. Respeta RLS. */
 export async function retrieveLaws(supabase: SupabaseClient, question: string, limit = 6): Promise<LawHit[]> {
   const ftsQuery = toSearchQuery(question);
   const [fts, emb] = await Promise.all([

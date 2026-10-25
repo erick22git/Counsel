@@ -2,26 +2,29 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Building2, Mail, Phone, Plus, Search, User } from "lucide-react";
+import { Building2, Mail, Phone, Plus, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, PageHeader, Pill } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Input } from "@/components/ui/field";
+import { BuscadorLista } from "@/components/paginacion/buscador-lista";
+import { Paginacion } from "@/components/paginacion/paginacion";
 import { ClienteDialog } from "@/components/clientes/cliente-dialog";
-import { filterClients } from "@/lib/casos/filters";
 import type { Client } from "@/lib/db/types";
 
 export function ClientesView({
-  clients, caseCounts, initialOpen,
+  clients: list, caseCounts, initialOpen, q = "", total = list.length, page = 1, pageSize = 25,
 }: {
   clients: Client[];
   caseCounts: Record<string, number>;
   initialOpen: boolean;
+  /** Búsqueda ya aplicada en el servidor. */
+  q?: string;
+  total?: number;
+  page?: number;
+  pageSize?: number;
 }) {
   const router = useRouter();
-  const [q, setQ] = React.useState("");
   const [open, setOpen] = React.useState(initialOpen);
-  const list = React.useMemo(() => filterClients(clients, q), [clients, q]);
 
   function onOpenChange(o: boolean) {
     setOpen(o);
@@ -36,9 +39,9 @@ export function ClientesView({
 
   return (
     <>
-      <PageHeader title="Clientes" subtitle="Las personas y empresas a las que atiendes." action={clients.length > 0 ? newButton : undefined} />
+      <PageHeader title="Clientes" subtitle="Las personas y empresas a las que atiendes." action={total > 0 || q ? newButton : undefined} />
 
-      {clients.length === 0 ? (
+      {total === 0 && !q ? (
         <EmptyState
           title="Aún no tienes clientes"
           description="Registra a tu primer cliente con su nombre y teléfono. Luego podrás abrirle casos."
@@ -46,15 +49,8 @@ export function ClientesView({
         />
       ) : (
         <>
-          <div className="relative mb-5 max-w-xl">
-            <label htmlFor="buscar-cliente" className="sr-only">Buscar cliente</label>
-            <Search aria-hidden size={20} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-ink-3" />
-            <Input
-              id="buscar-cliente" type="search" value={q} onChange={(e) => setQ(e.target.value)}
-              placeholder="Buscar por nombre, CI o NIT" className="pl-12" autoComplete="off"
-            />
-          </div>
-          <p className="sr-only" aria-live="polite">{list.length} clientes encontrados</p>
+          <BuscadorLista basePath="/clientes" q={q} id="buscar-cliente" label="Buscar cliente" placeholder="Buscar por nombre, CI o NIT" clearHref="/clientes" />
+          <p className="sr-only" aria-live="polite">{total} clientes encontrados</p>
           {list.length === 0 ? (
             <Card className="text-center text-ink-2">No encontramos ningún cliente con “{q}”. Prueba con otro nombre o con el número de CI/NIT.</Card>
           ) : (
@@ -91,6 +87,7 @@ export function ClientesView({
               })}
             </ul>
           )}
+          <Paginacion total={total} page={page} pageSize={pageSize} basePath="/clientes" params={{ q }} noun="clientes" />
         </>
       )}
       <ClienteDialog open={open} onOpenChange={onOpenChange} onSaved={(id) => router.push(`/clientes/${id}`)} />

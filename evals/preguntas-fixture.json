@@ -1,0 +1,15 @@
+{
+  "_aviso": "Preguntas DEMO para validar el arnés con evals/corpus-fixture.json (texto ficticio). No miden calidad legal real.",
+  "preguntas": [
+    { "id": "fx-01", "pregunta": "¿Cuándo debe pagarse el canon del arrendamiento cada mes?", "materia": "civil", "norma_esperada": "DEMO-ARR", "articulo_esperado": "Artículo 2", "verificado": false, "notas": "Demo ficticia." },
+    { "id": "fx-02", "pregunta": "¿Qué pasa si el inquilino no paga dos meses de canon?", "materia": "civil", "norma_esperada": "DEMO-ARR", "articulo_esperado": "Artículo 3", "verificado": false, "notas": "Demo ficticia." },
+    { "id": "fx-03", "pregunta": "¿En cuántos días hay que contestar una demanda?", "materia": "procesal", "norma_esperada": "DEMO-PLZ", "articulo_esperado": "Artículo 1", "verificado": false, "notas": "Demo ficticia." },
+    { "id": "fx-04", "pregunta": "¿Cuánto tiempo hay para apelar una sentencia?", "materia": "procesal", "norma_esperada": "DEMO-PLZ", "articulo_esperado": "Artículo 2", "verificado": false, "notas": "Demo ficticia." },
+    { "id": "fx-05", "pregunta": "¿Cuántas horas diarias puede durar la jornada de trabajo?", "materia": "laboral", "norma_esperada": "DEMO-LAB", "articulo_esperado": "Artículo 1", "verificado": false, "notas": "Demo ficticia." },
+    { "id": "fx-06", "pregunta": "¿Cuántos días de vacación tiene un trabajador por año?", "materia": "laboral", "norma_esperada": "DEMO-LAB", "articulo_esperado": "Artículo 2", "verificado": false, "notas": "Demo ficticia." }
+  ],
+  "controles": [
+    { "id": "fx-c1", "pregunta": "¿Cuál es la receta del chupe de pollo?", "materia": "fuera_de_base", "esperado": "rechazo", "notas": "Control demo." },
+    { "id": "fx-c2", "pregunta": "¿Quién ganó el partido de fútbol de ayer?", "materia": "fuera_de_base", "esperado": "rechazo", "notas": "Control demo." }
+  ]
+}

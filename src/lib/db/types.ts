@@ -15,7 +15,7 @@ export interface Firm {
 }
 export interface Profile {
   id: string; firm_id: string; full_name: string; email: string | null; role: UserRole; client_id: string | null;
-  hourly_rate: number; preferences: Preferences; created_at: string;
+  hourly_rate: number; preferences: Preferences; active?: boolean; created_at: string;
 }
 export interface Client {
   id: string; firm_id: string; kind: "persona" | "empresa"; full_name: string; ci_nit: string | null; email: string | null;

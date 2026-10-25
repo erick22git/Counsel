@@ -1,0 +1,13 @@
+{
+  "_aviso": "TEXTO FICTICIO DEMO. No es norma vigente. Solo sirve para validar el arnés de evaluación y la CI sin claves ni base de datos.",
+  "chunks": [
+    { "id": "f1", "code": "DEMO-ARR", "law_title": "Norma de ejemplo sobre arrendamientos (ficticia)", "article": "Artículo 1", "heading": "Disposiciones generales", "content": "DEMO: El arrendamiento es un contrato ficticio por el cual una parte cede a otra el uso de un inmueble a cambio de un canon. Texto inventado para pruebas." },
+    { "id": "f2", "code": "DEMO-ARR", "law_title": "Norma de ejemplo sobre arrendamientos (ficticia)", "article": "Artículo 2", "heading": "Disposiciones generales", "content": "DEMO: El canon de arrendamiento ficticio debe pagarse dentro de los primeros cinco días de cada mes. Texto inventado, no vigente." },
+    { "id": "f3", "code": "DEMO-ARR", "law_title": "Norma de ejemplo sobre arrendamientos (ficticia)", "article": "Artículo 3", "heading": "Terminación", "content": "DEMO: El inquilino ficticio que no pague dos meses seguidos de canon puede ser desalojado tras un aviso escrito de quince días. Texto inventado." },
+    { "id": "f4", "code": "DEMO-PLZ", "law_title": "Norma de ejemplo sobre plazos procesales (ficticia)", "article": "Artículo 1", "heading": "Plazos", "content": "DEMO: El plazo ficticio para contestar una demanda de ejemplo es de treinta días calendario. Texto inventado, no vigente." },
+    { "id": "f5", "code": "DEMO-PLZ", "law_title": "Norma de ejemplo sobre plazos procesales (ficticia)", "article": "Artículo 2", "heading": "Plazos", "content": "DEMO: El plazo ficticio para apelar una sentencia de ejemplo es de diez días hábiles desde la notificación. Texto inventado." },
+    { "id": "f6", "code": "DEMO-LAB", "law_title": "Norma de ejemplo sobre trabajo (ficticia)", "article": "Artículo 1", "heading": "Jornada", "content": "DEMO: La jornada ficticia de trabajo no puede pasar de ocho horas diarias. Texto inventado, no vigente." },
+    { "id": "f7", "code": "DEMO-LAB", "law_title": "Norma de ejemplo sobre trabajo (ficticia)", "article": "Artículo 2", "heading": "Vacaciones", "content": "DEMO: Todo trabajador ficticio tiene derecho a quince días de vacación por cada año de servicio. Texto inventado." },
+    { "id": "f8", "code": "DEMO-FAM", "law_title": "Norma de ejemplo sobre familia (ficticia)", "article": "Artículo 1", "heading": "Asistencia", "content": "DEMO: La asistencia familiar ficticia para hijos menores se fija según las necesidades del hijo y los ingresos de quien la paga. Texto inventado." }
+  ]
+}

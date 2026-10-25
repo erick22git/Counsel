@@ -1,7 +1,8 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { decideAuth, type AalInfo } from "@/lib/security/mfa";
 
-const PUBLIC_PREFIXES = ["/login", "/registro", "/consulta", "/reservar", "/terminos", "/privacidad", "/offline", "/auth", "/vista-previa"];
+const PUBLIC_PREFIXES = ["/login", "/registro", "/consulta", "/reservar", "/terminos", "/privacidad", "/offline", "/auth", "/vista-previa", "/api/cron"]; // /api/cron se protege con su propio Bearer CRON_SECRET
 
 export async function proxy(request: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -41,16 +42,25 @@ export async function proxy(request: NextRequest) {
   const { data } = await supabase.auth.getUser();
   const isPublic = pathname === "/" || PUBLIC_PREFIXES.some((p) => pathname.startsWith(p));
 
-  if (!data.user && !isPublic) {
-    const to = request.nextUrl.clone();
-    to.pathname = "/login";
-    to.searchParams.set("siguiente", pathname);
-    return NextResponse.redirect(to);
+  // MFA opcional (TOTP): si el usuario tiene factor verificado y su sesión es aal1, debe verificar.
+  let aal: AalInfo | null = null;
+  if (data.user) {
+    try {
+      const r = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      aal = r.data ? { currentLevel: r.data.currentLevel, nextLevel: r.data.nextLevel } : null;
+    } catch {
+      aal = null; // si falla la consulta no bloqueamos (RLS sigue protegiendo los datos)
+    }
   }
-  if (data.user && (pathname.startsWith("/login") || pathname.startsWith("/registro"))) {
+  const d = decideAuth({ pathname, isPublic, hasUser: !!data.user, aal });
+  if (d.action === "unauthorized") {
+    return NextResponse.json({ error: "Falta la verificación en dos pasos." }, { status: 401 });
+  }
+  if (d.action === "redirect") {
     const to = request.nextUrl.clone();
-    to.pathname = "/panel";
+    to.pathname = d.to;
     to.search = "";
+    if (!data.user || (d.to === "/login/verificar" && !pathname.startsWith("/login"))) to.searchParams.set("siguiente", pathname);
     return NextResponse.redirect(to);
   }
   return response;

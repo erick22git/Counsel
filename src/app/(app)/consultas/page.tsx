@@ -2,31 +2,60 @@ import { PageHeader, Card, Pill } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { requireStaff } from "@/lib/auth";
 import { fmtDateTime, MATTERS } from "@/lib/format";
+import { BuscadorLista } from "@/components/paginacion/buscador-lista";
+import { Paginacion } from "@/components/paginacion/paginacion";
+import { fetchPage, orIlike, parseListParams, type RawParams } from "@/lib/paginacion";
 import { InboxActions, RequestActions, ShareLinks } from "./inbox-actions";
 
 export const metadata = { title: "Consultas · Counsel" };
 
-export default async function Consultas() {
+type Req = { id: string; full_name: string; email: string | null; phone: string | null; reason: string | null; preferred_at: string; status: string };
+type Intake = { id: string; full_name: string; email: string | null; phone: string | null; matter: string | null; message: string; status: string; created_at: string };
+
+export default async function Consultas({ searchParams }: { searchParams: Promise<RawParams> }) {
+  const sp = await searchParams;
+  const { q, page: pageCitas } = parseListParams(sp, { pageParam: "pagina_citas" });
+  const { page: pageConsultas } = parseListParams(sp, { pageParam: "pagina_consultas" });
   const { supabase, firm } = await requireStaff();
-  const [intake, reqs] = await Promise.all([
-    supabase.from("intake_submissions").select("*").order("created_at", { ascending: false }).limit(100),
-    supabase.from("appointment_requests").select("*").order("created_at", { ascending: false }).limit(100),
+
+  const [reqs, intake, { count: nPend }, { count: nNuevas }] = await Promise.all([
+    fetchPage<Req>((from, to) => {
+      let query = supabase.from("appointment_requests").select("*", { count: "exact" });
+      if (q) query = query.or(orIlike(["full_name", "phone", "email", "reason"], q));
+      return query.order("created_at", { ascending: false }).order("id").range(from, to).returns<Req[]>();
+    }, pageCitas),
+    fetchPage<Intake>((from, to) => {
+      let query = supabase.from("intake_submissions").select("*", { count: "exact" });
+      if (q) query = query.or(orIlike(["full_name", "phone", "email", "message"], q));
+      return query.order("created_at", { ascending: false }).order("id").range(from, to).returns<Intake[]>();
+    }, pageConsultas),
+    // Contadores de pendientes sobre todo el despacho (no solo la página).
+    supabase.from("appointment_requests").select("id", { count: "exact", head: true }).eq("status", "pendiente"),
+    supabase.from("intake_submissions").select("id", { count: "exact", head: true }).eq("status", "nueva"),
   ]);
   const base = process.env.NEXT_PUBLIC_APP_URL ?? "";
-  const nuevas = (intake.data ?? []).filter((i) => i.status === "nueva");
-  const pend = (reqs.data ?? []).filter((r) => r.status === "pendiente");
+  const pend = { length: nPend ?? 0 };
+  const nuevas = { length: nNuevas ?? 0 };
+  const reqPage = reqs.meta.page;
+  const intakePage = intake.meta.page;
+  const sinFiltro = !q;
 
   return (
     <>
       <PageHeader title="Consultas" subtitle="Personas que te escribieron o pidieron una cita desde tus enlaces." />
       <ShareLinks consulta={`${base}/consulta/${firm.slug}`} reservar={`${base}/reservar/${firm.slug}`} />
 
+      <div className="mt-6">
+        <BuscadorLista basePath="/consultas" q={q} id="buscar-consulta" label="Buscar en consultas y citas" placeholder="Nombre, teléfono, correo o texto del mensaje" clearHref="/consultas" />
+      </div>
+
       <h2 className="mb-3 mt-8 text-[length:var(--text-heading-sm)]">Solicitudes de cita {pend.length > 0 && <Pill tone="warn">{pend.length} por responder</Pill>}</h2>
-      {!reqs.data?.length ? (
-        <p className="text-ink-2">Aún no hay solicitudes de cita.</p>
+      {reqs.meta.total === 0 ? (
+        <p className="text-ink-2">{sinFiltro ? "Aún no hay solicitudes de cita." : "Ninguna solicitud de cita coincide con tu búsqueda."}</p>
       ) : (
+        <>
         <ul className="grid gap-3">
-          {reqs.data.map((r) => (
+          {reqs.rows.map((r) => (
             <li key={r.id}>
               <Card className="grid gap-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -41,14 +70,22 @@ export default async function Consultas() {
             </li>
           ))}
         </ul>
+        <Paginacion total={reqs.meta.total} page={reqPage} pageSize={reqs.meta.pageSize} basePath="/consultas" pageParam="pagina_citas"
+          params={{ q, pagina_consultas: intakePage > 1 ? String(intakePage) : "" }} noun="solicitudes" />
+        </>
       )}
 
       <h2 className="mb-3 mt-8 text-[length:var(--text-heading-sm)]">Consultas recibidas {nuevas.length > 0 && <Pill tone="warn">{nuevas.length} nuevas</Pill>}</h2>
-      {!intake.data?.length ? (
-        <EmptyState title="Aún no hay consultas" description="Comparte tu enlace de consultas en WhatsApp o tu página y llegarán aquí." />
+      {intake.meta.total === 0 ? (
+        sinFiltro ? (
+          <EmptyState title="Aún no hay consultas" description="Comparte tu enlace de consultas en WhatsApp o tu página y llegarán aquí." />
+        ) : (
+          <p className="text-ink-2">Ninguna consulta coincide con tu búsqueda.</p>
+        )
       ) : (
+        <>
         <ul className="grid gap-3">
-          {intake.data.map((i) => (
+          {intake.rows.map((i) => (
             <li key={i.id}>
               <Card className="grid gap-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -62,6 +99,9 @@ export default async function Consultas() {
             </li>
           ))}
         </ul>
+        <Paginacion total={intake.meta.total} page={intakePage} pageSize={intake.meta.pageSize} basePath="/consultas" pageParam="pagina_consultas"
+          params={{ q, pagina_citas: reqPage > 1 ? String(reqPage) : "" }} noun="consultas" />
+        </>
       )}
     </>
   );

@@ -8,8 +8,12 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { InvoiceFilters } from "@/components/cobros/invoice-filters";
 import { fmtDate, fmtMoney } from "@/lib/format";
 import { fromCents } from "@/lib/cobros/money";
-import { STATUS_LABEL, STATUS_TONE } from "@/lib/cobros/status";
-import { filterViews, summarize, toView, type ByCurrency, type InvoiceRow } from "@/lib/cobros/summary";
+import { Paginacion } from "@/components/paginacion/paginacion";
+import {
+  enumParam, fetchAllRows, fetchPage, paginateArray, parseListParams, resumenCobros, uuidParam, type PageMeta, type RawParams,
+} from "@/lib/paginacion";
+import { STATUS_LABEL, STATUS_TONE, todayLaPaz } from "@/lib/cobros/status";
+import { filterViews, toView, type ByCurrency, type InvoiceRow, type InvoiceView } from "@/lib/cobros/summary";
 
 export const metadata = { title: "Cobros · Counsel" };
 
@@ -33,31 +37,77 @@ function Money({ v }: { v: ByCurrency }) {
   );
 }
 
-export default async function CobrosPage({ searchParams }: { searchParams: Promise<{ [k: string]: string | undefined }> }) {
+const ESTADOS = ["borrador", "enviada", "vencida", "pagada", "anulada"] as const;
+const SELECT =
+  "id, number, status, currency, issue_date, due_date, client_id, case_id, client:clients(full_name), case:cases(title), invoice_items(quantity, unit_price), payments(amount, paid_on)";
+
+const toRow = (r: Raw): InvoiceRow => ({
+  id: r.id, number: r.number, status: r.status, currency: r.currency, issue_date: r.issue_date, due_date: r.due_date,
+  client_id: r.client_id, case_id: r.case_id, client_name: r.client?.full_name ?? "—", case_title: r.case?.title ?? null,
+  items: r.invoice_items ?? [], payments: r.payments ?? [],
+});
+
+function nextMonthStart(today: string): string {
+  const y = Number(today.slice(0, 4));
+  const m = Number(today.slice(5, 7));
+  return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+}
+
+export default async function CobrosPage({ searchParams }: { searchParams: Promise<RawParams> }) {
   const sp = await searchParams;
   if (sp.nuevo) redirect("/cobros/nuevo");
+  const { page, filters } = parseListParams(sp, { filters: { estado: enumParam(ESTADOS), cliente: uuidParam } });
+  const { estado, cliente } = filters;
   const { supabase } = await requireStaff();
+  const today = todayLaPaz();
+  const monthStart = `${today.slice(0, 7)}-01`;
 
-  const [{ data: raw }, { data: clients }] = await Promise.all([
-    supabase
-      .from("invoices")
-      .select("id, number, status, currency, issue_date, due_date, client_id, case_id, client:clients(full_name), case:cases(title), invoice_items(quantity, unit_price), payments(amount, paid_on)")
-      .order("created_at", { ascending: false })
-      .limit(500)
-      .returns<Raw[]>(),
+  // "Enviada" y "Vencida" se derivan del saldo: se calculan sobre las cuentas enviadas (conjunto acotado).
+  const inMemory = estado === "enviada" || estado === "vencida";
+
+  const [{ data: enviadasRaw }, pagosMes, hasAny, { data: clients }, list] = await Promise.all([
+    // Agregados para las tarjetas: SIEMPRE sobre todo el despacho, nunca sobre la página.
+    supabase.from("invoices").select(SELECT).eq("status", "enviada").order("created_at", { ascending: false }).limit(1000).returns<Raw[]>(),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("payments")
+        .select("amount, invoices!inner(status, currency)")
+        .gte("paid_on", monthStart).lt("paid_on", nextMonthStart(today))
+        .neq("invoices.status", "anulada")
+        .range(from, to)
+        .returns<{ amount: number | string; invoices: { currency: "BOB" | "USD" } | { currency: "BOB" | "USD" }[] }[]>()
+    ),
+    supabase.from("invoices").select("id", { count: "exact", head: true }),
     supabase.from("clients").select("id, full_name").is("deleted_at", null).order("full_name"),
+    inMemory
+      ? Promise.resolve(null)
+      : fetchPage<Raw>((from, to) => {
+          let query = supabase.from("invoices").select(SELECT, { count: "exact" });
+          if (estado) query = query.eq("status", estado);
+          if (cliente) query = query.eq("client_id", cliente);
+          return query.order("created_at", { ascending: false }).order("id").range(from, to).returns<Raw[]>();
+        }, page),
   ]);
 
-  const all = (raw ?? []).map((r) =>
-    toView({
-      id: r.id, number: r.number, status: r.status, currency: r.currency, issue_date: r.issue_date, due_date: r.due_date,
-      client_id: r.client_id, case_id: r.case_id, client_name: r.client?.full_name ?? "—", case_title: r.case?.title ?? null,
-      items: r.invoice_items ?? [], payments: r.payments ?? [],
-    })
+  const enviadas = (enviadasRaw ?? []).map((r) => toView(toRow(r), today));
+  const sum = resumenCobros(
+    enviadas.map((v) => ({ currency: v.currency, due_date: v.due_date, items: v.items, payments: v.payments })),
+    pagosMes.map((p) => ({ amount: p.amount, currency: (Array.isArray(p.invoices) ? p.invoices[0] : p.invoices).currency })),
+    today
   );
-  const sum = summarize(all);
-  const rows = filterViews(all, { estado: sp.estado, cliente: sp.cliente });
-  const filtering = Boolean(sp.estado || sp.cliente);
+
+  let rows: InvoiceView[];
+  let meta: PageMeta;
+  if (list) {
+    rows = list.rows.map((r) => toView(toRow(r), today));
+    meta = list.meta;
+  } else {
+    const p = paginateArray(filterViews(enviadas, { estado, cliente }), page);
+    rows = p.rows;
+    meta = p.meta;
+  }
+  const filtering = Boolean(estado || cliente);
+  const listParams = { estado, cliente };
 
   const newBtn = (
     <Button asChild variant="primary">
@@ -67,7 +117,7 @@ export default async function CobrosPage({ searchParams }: { searchParams: Promi
 
   return (
     <>
-      <PageHeader title="Cobros" subtitle="Tus cuentas de cobro y lo que te deben tus clientes." action={all.length ? newBtn : undefined} />
+      <PageHeader title="Cobros" subtitle="Tus cuentas de cobro y lo que te deben tus clientes." action={hasAny.count ? newBtn : undefined} />
 
       <div className="grid gap-4 sm:grid-cols-3">
         <Card>
@@ -87,13 +137,13 @@ export default async function CobrosPage({ searchParams }: { searchParams: Promi
         Son cuentas de cobro internas de tu despacho, no facturas fiscales (SIAT).
       </p>
 
-      {all.length === 0 ? (
+      {!hasAny.count ? (
         <div className="mt-8">
           <EmptyState title="Aún no tienes cobros" description="Crea tu primera cuenta de cobro y registra los pagos de tus clientes." action={newBtn} />
         </div>
       ) : (
         <>
-          <InvoiceFilters clients={clients ?? []} estado={sp.estado ?? ""} cliente={sp.cliente ?? ""} />
+          <InvoiceFilters clients={clients ?? []} estado={estado} cliente={cliente} />
           {rows.length === 0 ? (
             <Card className="mt-4 text-center text-ink-2">{filtering ? "No hay cobros con esos filtros." : "Sin cobros."}</Card>
           ) : (
@@ -132,6 +182,7 @@ export default async function CobrosPage({ searchParams }: { searchParams: Promi
               </table>
             </Card>
           )}
+          <Paginacion total={meta.total} page={meta.page} pageSize={meta.pageSize} basePath="/cobros" params={listParams} noun="cobros" />
         </>
       )}
     </>
